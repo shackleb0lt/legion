@@ -28,7 +28,7 @@ bool is_run = true;
 
 void signal_handler(int sig)
 {
-    printf("Received %s signal\nInitiating server shutdown...", strsignal(sig));
+    printf("Received %s signal\nInitiating server shutdown...\n", strsignal(sig));
     is_run = false;
 }
 
@@ -87,6 +87,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
 
     memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
+    clist.last_free = 0;
+
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1)
     {
@@ -111,7 +113,8 @@ int main(int argc, char *argv[])
         nfds = epoll_wait(epoll_fd, events, MAX_ALIVE_CONN, -1);
         if (nfds == -1)
         {
-            perror("epoll_wait");
+            if(errno != EINTR)
+                perror("epoll_wait");
             is_run = false;
             break;
         }
@@ -125,10 +128,8 @@ int main(int argc, char *argv[])
             {
                 ret = accept_connections(server_fd, epoll_fd, &clist);
                 if (ret == -1)
-                {
                     is_run = false;
-                    break;
-                }
+                continue;
             }
             else if (curr_event & EPOLLIN)
             {

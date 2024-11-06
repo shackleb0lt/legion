@@ -31,7 +31,22 @@ const char * get_string()
 
 int handle_http_request(int client_fd)
 {
+    ssize_t bytes_read = 0;
+    ssize_t bytes_written = 0;
     char buffer[BUFFER_SIZE];
-    ssize_t bytes_read = read(client_fd, buffer, BUFFER_SIZE);
+    char resp[] = "HTTP/1.0 200 OK\r\n"
+                  "Server: legion\r\n"
+                  "Content-type: text/html\r\n\r\n"
+                  "<html>Hello, World!</html>\r\n";
+
+    bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+    if (bytes_read <= 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
+        return -1;
+
+    // buffer[bytes_read] = '\0';
+    bytes_written = send(client_fd, resp, strlen(resp), 0);
+
+    if(bytes_written == -1)
+        return -1;
     return 0;
 }

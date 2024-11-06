@@ -93,7 +93,7 @@ int initiate_server(const char *server_ip, const char *port)
     hint.ai_flags = AI_NUMERICHOST;
 
     ret = getaddrinfo(server_ip, port, &hint, &res);
-    if (ret != 0)
+    if (ret != 0 || res == NULL)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(ret));
         return -1;
@@ -147,12 +147,18 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
     struct sockaddr client_addr = {0};
     socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
-    
+    // struct sockaddr_in *temp = NULL;
+    // char ipstr[INET6_ADDRSTRLEN];
+
     while(1)
     {
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
         if(client_fd == -1)
             break;
+
+        // temp = (struct sockaddr_in *) &client_addr;
+        // inet_ntop(temp->sin_family, &(temp->sin_addr), ipstr, sizeof(ipstr));
+        // debug_log("%s : %d \n", ipstr, ntohs(temp->sin_port));
 
         ret = set_nonblocking(client_fd);
         if(ret == -1)

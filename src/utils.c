@@ -24,7 +24,7 @@
 
 #include "server.h"
 
-int set_nonblocking(int fd)
+int set_nonblocking(const int fd)
 {
     int ret = 0;
     ret = fcntl(fd, F_GETFL, 0);
@@ -43,7 +43,7 @@ int set_nonblocking(int fd)
     return 0;
 }
 
-int add_fd_to_list(client_list *clist, int fd)
+int add_fd_to_list(client_list *clist, const int fd)
 {
     ssize_t curr = 0;
     if(clist->last_free == -1)
@@ -68,7 +68,7 @@ int add_fd_to_list(client_list *clist, int fd)
     return 0;
 }
 
-int remove_fd_from_list(client_list *clist, int fd)
+int remove_fd_from_list(client_list *clist, const int fd)
 {
     ssize_t curr = 0;
     for(; curr < MAX_ALIVE_CONN; curr++)
@@ -86,4 +86,17 @@ int remove_fd_from_list(client_list *clist, int fd)
         clist->last_free = curr;
 
     return 0;
+}
+
+int debug_log(const char *fmt, ...)
+{
+    int bytes_written = 0;
+    va_list args;
+    va_start(args, fmt);
+
+    bytes_written = vprintf(fmt, args);
+    fflush(stdout);
+    
+    va_end(args);
+    return bytes_written;
 }

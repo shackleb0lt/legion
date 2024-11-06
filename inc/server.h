@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <signal.h>
 #include <unistd.h>
@@ -47,6 +48,7 @@
 #define MAX_ALIVE_CONN 4096
 #define BUFFER_SIZE 4096
 #define INDEX_FILE "/var/www/html/index.nginx-debian.html"
+#define DEBUG_LOG_FILE "/tmp/legion.log"
 
 typedef struct 
 {
@@ -54,14 +56,19 @@ typedef struct
     ssize_t last_free;
 } client_list;
 
+// parser.c
 int handle_http_request(int client_fd);
 
-int set_nonblocking(int fd);
-int add_fd_to_list(client_list *clist, int fd);
-int remove_fd_from_list(client_list *clist, int fd);
+// utils.c
+int debug_log(const char *fmt, ...);
+int set_nonblocking(const int fd);
+int add_fd_to_list(client_list *clist,const int fd);
+int remove_fd_from_list(client_list *clist,const int fd);
 
+// net_utils.c
 int initiate_server(const char *server_ip, const char *port);
 int accept_connections(const int server_fd, const int epoll_fd, client_list* client_list);
+const char *get_internet_facing_ipv4();
 
 
 #ifdef IPV6_SERVER
