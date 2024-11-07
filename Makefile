@@ -4,7 +4,7 @@ CFLAGS := -Wall -Wextra -Iinc
 LDFLAGS := -lpthread -lrt
 
 # Build modes
-DEBUG_FLAGS :=-g -O0 -Wformat=2 -Wconversion -Wimplicit-fallthrough
+DEBUG_FLAGS :=-g -O0 -Wformat=2 -Wconversion -Wimplicit-fallthrough -DDEBUG
 
 RELEASE_C_FLAGS := -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2
 RELEASE_LD_FLAGS := -s -Wl,-z,noexecstack -Wl,-z,defs -Wl,-z,nodump

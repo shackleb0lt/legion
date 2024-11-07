@@ -38,7 +38,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+#define SERVER_IP_ADDR "127.0.0.1"
 #define SERVER_PORT "8080"
+
 #define MAX_QUEUE_CONN 256
 #define MAX_ALIVE_CONN 4096
 #define BUFFER_SIZE 4096
@@ -67,6 +69,8 @@ int add_fd_to_list(client_list *clist,const int fd);
 int remove_fd_from_list(client_list *clist,const int fd);
 size_t initiate_cache(const char *root_path);
 page_cache *get_page_cache(const char * path);
+void free_cache();
+
 // net_utils.c
 int initiate_server(const char *server_ip, const char *port);
 int accept_connections(const int server_fd, const int epoll_fd, client_list* client_list);

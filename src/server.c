@@ -1,18 +1,18 @@
 /**
  * MIT License
- * 
+ *
  * Copyright (c) 2024 Aniruddha Kawade
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -25,16 +25,30 @@
 #include "server.h"
 #include <signal.h>
 
+// Flag to maintain running status of the server
 bool is_run = true;
+
+// Stores the web assets in a readily accessible cache
 size_t g_cache_size = 0;
 page_cache *g_cache = NULL;
 
+/**
+ *  Signal handler to chanage stop and
+ * shutdown the server gracefully
+ */
 void signal_handler(int sig)
 {
-    printf("Received %s signal\nInitiating server shutdown...\n", strsignal(sig));
+    printf("Received %s signal\n"
+           "Initiating server shutdown...\n",
+           strsignal(sig));
     is_run = false;
 }
 
+/**
+ * Function to register above signal handler
+ * Above function will be triggered whenever any 
+ * one of below signals is received
+ */
 int signal_setup()
 {
     struct sigaction sa;
@@ -42,7 +56,6 @@ int signal_setup()
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
 
-    // Set up signal handling
     if (sigaction(SIGTERM, &sa, NULL) == -1)
     {
         perror("sigaction: SIGTERM");
@@ -68,7 +81,6 @@ int signal_setup()
 
 int main(int argc, char *argv[])
 {
-    size_t i = 0;
     ssize_t nfds = 0, curr = 0;
     int server_fd = 0, epoll_fd = 0;
     int ret = 0, curr_fd = 0;
@@ -80,12 +92,19 @@ int main(int argc, char *argv[])
     if (signal_setup() != 0)
         return EXIT_FAILURE;
 
+    // Build the cache from all files in assets folder
     g_cache_size = initiate_cache("assets");
-    if(g_cache_size == 0)
+    if (g_cache_size == 0)
         return EXIT_FAILURE;
+    
+    // Struct to keeep track of active client connections
+    memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
+    clist.last_free = 0;
 
+    // Initiate the server from default or
+    // User provided IP address annd Port
     if (argc == 1)
-        server_fd = initiate_server(NULL, SERVER_PORT);
+        server_fd = initiate_server(SERVER_IP_ADDR, SERVER_PORT);
     else if (argc == 2)
         server_fd = initiate_server(argv[1], SERVER_PORT);
     else if (argc == 3)
@@ -96,14 +115,13 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    // Check if server launch succeeded
     if (server_fd < 0)
     {
         goto cleanup_cache;
     }
 
-    memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
-    clist.last_free = 0;
-
+    // Setup epoll to track incoming connection on server port
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1)
     {
@@ -120,35 +138,45 @@ int main(int argc, char *argv[])
         goto cleanup_epoll;
     }
 
+    // Keep server alive until running status is true
     while (is_run)
     {
+        // Wait for incoming activity on all the ports being tracked
         nfds = epoll_wait(epoll_fd, events, MAX_ALIVE_CONN, -1);
         if (nfds == -1)
         {
-            if(errno != EINTR)
+            // If wait didn't exit due to interrupt signal
+            // Then error happened, in any case exit the loop
+            if (errno != EINTR)
                 perror("epoll_wait");
             is_run = false;
             break;
         }
 
+        // If wait exited due to incoming connection or request 
+        // Then handle it below
         for (curr = 0; curr < nfds; curr++)
         {
             curr_event = events[curr].events;
             curr_fd = events[curr].data.fd;
-
+            // New event on server_fd means incoming connection
             if (curr_fd == server_fd)
             {
+                // Accept new connection and add it to epoll
                 ret = accept_connections(server_fd, epoll_fd, &clist);
                 if (ret == -1)
                     is_run = false;
                 continue;
             }
+            // On a client socket only if there is incoming request
+            // then parse it and send response
             else if (curr_event & EPOLLIN)
             {
                 ret = handle_http_request(curr_fd);
                 if (ret == 0)
                     continue;
             }
+            // Close the socket otherwise 
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, curr_fd, NULL);
             remove_fd_from_list(&clist, curr_fd);
             close(curr_fd);
@@ -156,6 +184,7 @@ int main(int argc, char *argv[])
     }
 
     sleep(2);
+    // Close all open client connections
     for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
     {
         if (clist.fd_list[curr] < 0)
@@ -163,16 +192,14 @@ int main(int argc, char *argv[])
         close(clist.fd_list[curr]);
     }
 cleanup_epoll:
+    // Close epoll socket
     close(epoll_fd);
 cleanup_server:
+    // Close Server socket
     close(server_fd);
 cleanup_cache:
-    for(i = 0; i < g_cache_size; i++)
-    {
-        free(g_cache[i].file_name);
-        close(g_cache[i].fd);
-    }
-    free(g_cache);
+    // Release the cache 
+    free_cache();
     return 0;
 }
 
@@ -181,9 +208,10 @@ cleanup_cache:
  * Create a web portfolio
  * Support sending of non html files.
  * Implement other HTTP methods.
- * Implement TLS/SSL handshake to mimic https.
+ * Use libssl to support https request.
+ * Write tests
  * Spawn a separate thread for accepting clients.
- * Add rate limiting, close client sockets after timeout, 
+ * Add rate limiting, close client sockets after timeout,
  * Implement hashtable based g_cache for get request of files.
  *
  */

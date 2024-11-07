@@ -30,6 +30,12 @@
 #define SOCKADDR_4_SIZE sizeof(struct sockaddr_in)
 #define SOCKADDR_6_SIZE sizeof(struct sockaddr_in6)
 
+/**
+ * Function to get an IPv4 address of the machine which
+ * is used to communicate with internet
+ * Returns a string strring numeric IPv4 notation on success,
+ * NULL otherwise
+ */
 const char *get_internet_facing_ipv4()
 {
     int dns_fd = 0;
@@ -37,6 +43,8 @@ const char *get_internet_facing_ipv4()
     struct sockaddr_in local_addr = {0};
     static char ip_addr[INET_ADDRSTRLEN];
 
+    // Fill struct as if we plan to connect 
+    // to Google's DNS Server
     dns_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (dns_fd < 0)
     {
@@ -49,14 +57,13 @@ const char *get_internet_facing_ipv4()
     inet_pton(AF_INET, "8.8.8.8", &serv.sin_addr);
 
     // Connect the socket to the remote address
-    // This doesn’t establish a true connection
+    // This doesn’t establish a true connection because its UDP
     // but sets up the socket with an appropriate route.
     if (connect(dns_fd, (struct sockaddr *)&serv, SOCKADDR_4_SIZE) < 0)
     {
         perror("connect");
         close(dns_fd);
         return NULL;
-        ;
     }
 
     // Get the local address of the socket
@@ -75,6 +82,11 @@ const char *get_internet_facing_ipv4()
     return ip_addr;
 }
 
+/**
+ * Function to intiate a server socket on the machine,
+ * and bind it to provided IP and port for listening to 
+ * incoming client connections.
+ */
 int initiate_server(const char *server_ip, const char *port)
 {
     int server_fd = 0, ret = 0;
@@ -83,12 +95,8 @@ int initiate_server(const char *server_ip, const char *port)
 
     if (server_ip == NULL)
     {
-        server_ip = get_internet_facing_ipv4();
-        if (server_ip == NULL)
-        {
-            fprintf(stderr, "No IP address available for host\n");
-            return -1;
-        }
+        fprintf(stderr, "No IP address available for host\n");
+        return -1;
     }
 
     hint.ai_family = AF_UNSPEC;
@@ -150,18 +158,22 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
     struct sockaddr client_addr = {0};
     socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
-    // struct sockaddr_in *temp = NULL;
-    // char ipstr[INET6_ADDRSTRLEN];
+
+#ifdef DEBUG
+    struct sockaddr_in *temp = NULL;
+    char ipstr[INET6_ADDRSTRLEN];
+#endif
 
     while(1)
     {
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
         if(client_fd == -1)
             break;
-
-        // temp = (struct sockaddr_in *) &client_addr;
-        // inet_ntop(temp->sin_family, &(temp->sin_addr), ipstr, sizeof(ipstr));
-        // debug_log("%s : %d \n", ipstr, ntohs(temp->sin_port));
+#ifdef DEBUG
+        temp = (struct sockaddr_in *) &client_addr;
+        inet_ntop(temp->sin_family, &(temp->sin_addr), ipstr, sizeof(ipstr));
+        debug_log("Incoming Connection from %s:%d \n", ipstr, ntohs(temp->sin_port));
+#endif
 
         ret = set_nonblocking(client_fd);
         if(ret == -1)
