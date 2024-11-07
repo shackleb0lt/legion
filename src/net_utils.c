@@ -23,6 +23,9 @@
  */
 
 #include "server.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 #define SOCKADDR_4_SIZE sizeof(struct sockaddr_in)
 #define SOCKADDR_6_SIZE sizeof(struct sockaddr_in6)

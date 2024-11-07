@@ -18,7 +18,7 @@ INC_DIR := inc
 BUILD_DIR := bld
 
 # Output executable name
-TARGET := $(BUILD_DIR)/serve
+TARGET := $(BUILD_DIR)/legion
 
 # Find all source files
 SRC_FILES := $(wildcard $(SRC_DIR)/*.c)

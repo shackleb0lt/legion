@@ -23,8 +23,11 @@
  */
 
 #include "server.h"
+#include <signal.h>
 
 bool is_run = true;
+size_t g_cache_size = 0;
+page_cache *g_cache = NULL;
 
 void signal_handler(int sig)
 {
@@ -55,11 +58,17 @@ int signal_setup()
         perror("sigaction: SIGHUP");
         return -1;
     }
+    if (sigaction(SIGQUIT, &sa, NULL) == -1)
+    {
+        perror("sigaction: SIGHUP");
+        return -1;
+    }
     return 0;
 }
 
 int main(int argc, char *argv[])
 {
+    size_t i = 0;
     ssize_t nfds = 0, curr = 0;
     int server_fd = 0, epoll_fd = 0;
     int ret = 0, curr_fd = 0;
@@ -69,6 +78,10 @@ int main(int argc, char *argv[])
     struct epoll_event events[MAX_ALIVE_CONN] = {{0}};
 
     if (signal_setup() != 0)
+        return EXIT_FAILURE;
+
+    g_cache_size = initiate_cache("assets");
+    if(g_cache_size == 0)
         return EXIT_FAILURE;
 
     if (argc == 1)
@@ -84,7 +97,9 @@ int main(int argc, char *argv[])
     }
 
     if (server_fd < 0)
-        return EXIT_FAILURE;
+    {
+        goto cleanup_cache;
+    }
 
     memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
     clist.last_free = 0;
@@ -93,8 +108,7 @@ int main(int argc, char *argv[])
     if (epoll_fd == -1)
     {
         perror("epoll_create1");
-        close(server_fd);
-        return EXIT_FAILURE;
+        goto cleanup_server;
     }
 
     ev.events = EPOLLIN;
@@ -103,9 +117,7 @@ int main(int argc, char *argv[])
     if (ret == -1)
     {
         perror("epoll_ctl: server_fd");
-        close(epoll_fd);
-        close(server_fd);
-        return EXIT_FAILURE;
+        goto cleanup_epoll;
     }
 
     while (is_run)
@@ -144,25 +156,34 @@ int main(int argc, char *argv[])
     }
 
     sleep(2);
-
     for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
     {
         if (clist.fd_list[curr] < 0)
             continue;
         close(clist.fd_list[curr]);
     }
-
+cleanup_epoll:
     close(epoll_fd);
+cleanup_server:
     close(server_fd);
+cleanup_cache:
+    for(i = 0; i < g_cache_size; i++)
+    {
+        free(g_cache[i].file_name);
+        close(g_cache[i].fd);
+    }
+    free(g_cache);
     return 0;
 }
 
 /**
  * To do list,
- *
- * Spawn separate thread for accepting clients,
- * keep a lock for client list if queue is full sleep until socket is freed up.
- *
- * Implement hashtable based cache for get request of files.
+ * Create a web portfolio
+ * Support sending of non html files.
+ * Implement other HTTP methods.
+ * Implement TLS/SSL handshake to mimic https.
+ * Spawn a separate thread for accepting clients.
+ * Add rate limiting, close client sockets after timeout, 
+ * Implement hashtable based g_cache for get request of files.
  *
  */
