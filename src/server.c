@@ -46,7 +46,7 @@ void signal_handler(int sig)
 
 /**
  * Function to register above signal handler
- * Above function will be triggered whenever any 
+ * Above function will be triggered whenever any
  * one of below signals is received
  */
 int signal_setup()
@@ -93,14 +93,17 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
 
     ret = initiate_logging();
-    if(ret != 0)
+    if (ret != 0)
         return EXIT_FAILURE;
 
+    LOG("Signal handler has been registered");
+
     // Build the cache from all files in assets folder
+    // For fast access while sending response
     g_cache_size = initiate_cache("assets");
     if (g_cache_size == 0)
         goto close_logs;
-    
+
     // Struct to keeep track of active client connections
     memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
     clist.last_free = 0;
@@ -142,6 +145,7 @@ int main(int argc, char *argv[])
         goto cleanup_epoll;
     }
 
+    LOG("epoll is ready to listen for incoming connetion on epoll_fd: %d", epoll_fd);
     // Keep server alive until running status is true
     while (is_run)
     {
@@ -156,8 +160,8 @@ int main(int argc, char *argv[])
             is_run = false;
             break;
         }
-
-        // If wait exited due to incoming connection or request 
+        LOG("epoll_wait returned nfds:%d", nfds);
+        // If wait exited due to incoming connection or request
         // Then handle it below
         for (curr = 0; curr < nfds; curr++)
         {
@@ -180,14 +184,15 @@ int main(int argc, char *argv[])
                 if (ret == 0)
                     continue;
             }
-            // Close the socket otherwise 
+            // Close the socket otherwise
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, curr_fd, NULL);
             remove_fd_from_list(&clist, curr_fd);
             close(curr_fd);
+            LOG("Connection from client_fd:%d is now closed", curr_fd);
         }
     }
 
-    sleep(2);
+    sleep(1);
     // Close all open client connections
     for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
     {
@@ -202,7 +207,7 @@ cleanup_server:
     // Close Server socket
     close(server_fd);
 cleanup_cache:
-    // Release the cache 
+    // Release the cache
     free_cache();
 close_logs:
     shutdown_loggging();
@@ -211,10 +216,11 @@ close_logs:
 
 /**
  * To do list,
- * 
+ *
  * Write tests
  * Create a web portfolio
  * Support sending of non html files
+ * Support sending compressed files
  * Maybe implement other HTTP methods.
  * Use libssl to support https request.
  * Spawn a separate thread for accepting clients.

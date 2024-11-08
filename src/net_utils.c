@@ -1,18 +1,18 @@
 /**
  * MIT License
- * 
+ *
  * Copyright (c) 2024 Aniruddha Kawade
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -43,7 +43,7 @@ const char *get_internet_facing_ipv4()
     struct sockaddr_in local_addr = {0};
     static char ip_addr[INET_ADDRSTRLEN];
 
-    // Fill struct as if we plan to connect 
+    // Fill struct as if we plan to connect
     // to Google's DNS Server
     dns_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (dns_fd < 0)
@@ -77,14 +77,44 @@ const char *get_internet_facing_ipv4()
 
     // Convert the IP address to a string
     inet_ntop(AF_INET, &local_addr.sin_addr, ip_addr, INET_ADDRSTRLEN);
-
+    LOG("Internet facing IP is %d", ip_addr);
     close(dns_fd);
     return ip_addr;
 }
 
 /**
+ * Converts ip version agnostic address to string 
+ */
+const char *get_ip_address(struct sockaddr *addr)
+{
+    short unsigned port = 0; 
+    void *ip_addr = NULL;
+    struct sockaddr_in6 *ipv6 = NULL;
+    struct sockaddr_in *ipv4 = NULL;
+    static char ipstr[INET6_ADDRSTRLEN + 8] = {0};
+
+    if (addr->sa_family == AF_INET)
+    {
+        ipv4 = (struct sockaddr_in *)addr;
+        ip_addr = &(ipv4->sin_addr);
+        port = ntohs(ipv4->sin_port);
+    }
+    else
+    {
+        ipv6 = (struct sockaddr_in6 *)addr;
+        ip_addr = &(ipv6->sin6_addr);
+        port = ntohs(ipv6->sin6_port);
+
+    }
+    // convert the IP to a string and print it:
+    inet_ntop(addr->sa_family, ip_addr, ipstr, INET6_ADDRSTRLEN);
+    snprintf(ipstr + strlen(ipstr), 8, ":%d", port);
+    return ipstr;
+}
+
+/**
  * Function to intiate a server socket on the machine,
- * and bind it to provided IP and port for listening to 
+ * and bind it to provided IP and port for listening to
  * incoming client connections.
  */
 int initiate_server(const char *server_ip, const char *port)
@@ -111,7 +141,7 @@ int initiate_server(const char *server_ip, const char *port)
         return -1;
     }
 
-    // Open a TCP socket that can communicate using IPv4  
+    // Open a TCP socket that can communicate using IPv4 or IPv6
     server_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (server_fd < 0)
     {
@@ -124,7 +154,7 @@ int initiate_server(const char *server_ip, const char *port)
     if (ret == -1)
         goto err_cleanup;
 
-    // Allow process to reuse a socket that's 
+    // Allow process to reuse a socket that's
     // not entirely freed up by kernel
     ret = 1;
     ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &ret, sizeof(int));
@@ -151,6 +181,10 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
+    printf("Server is active on %s\n", get_ip_address(res->ai_addr));
+    fflush(stdout);
+    LOG("Server is active on %s, server_fd %d",
+        get_ip_address(res->ai_addr), server_fd);
     freeaddrinfo(res);
     return server_fd;
 
@@ -162,40 +196,32 @@ err_cleanup:
 
 /**
  * Function that accepts all new incoming connections
- * on the server socket and adds them to epoll event listener 
+ * on the server socket and adds them to epoll event listener
  */
-int accept_connections(const int server_fd, const int epoll_fd, client_list* clist)
+int accept_connections(const int server_fd, const int epoll_fd, client_list *clist)
 {
     int ret = 0, client_fd = 0;
     struct sockaddr client_addr = {0};
     socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
 
-#ifdef DEBUG
-    struct sockaddr_in *temp = NULL;
-    char ipstr[INET6_ADDRSTRLEN];
-#endif
-
     // Loop until all incoming connections have been accepted
     // or rejected them if queue is full
-    while(1)
+    while (1)
     {
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
-        if(client_fd == -1)
+        if (client_fd == -1)
             break;
-#ifdef DEBUG
-        temp = (struct sockaddr_in *) &client_addr;
-        inet_ntop(temp->sin_family, &(temp->sin_addr), ipstr, sizeof(ipstr));
-        debug_log("Incoming Connection from %s:%d \n", ipstr, ntohs(temp->sin_port));
-#endif
+
+        LOG("Incoming Connection from %s", get_ip_address(&client_addr));
         // Set non blocking to avoid waiting for incoming requests
         ret = set_nonblocking(client_fd);
-        if(ret == -1)
+        if (ret == -1)
             break;
 
         // Add new connection to list of open connections
         ret = add_fd_to_list(clist, client_fd);
-        if(ret == -1)
+        if (ret == -1)
         {
             close(client_fd);
             continue;
@@ -211,9 +237,10 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
             remove_fd_from_list(clist, client_fd);
             break;
         }
+        LOG("Connection accepted and bound to client_fd: %d", client_fd);
     }
 
-    // Report error only if accept call failed 
+    // Report error only if accept call failed
     if (errno != EAGAIN && errno != EWOULDBLOCK)
     {
         perror("accept");

@@ -1,18 +1,18 @@
 /**
  * MIT License
- * 
+ *
  * Copyright (c) 2024 Aniruddha Kawade
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in all
  * copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -57,32 +57,32 @@ int set_nonblocking(const int fd)
 }
 
 /**
- * Function that adds a new client file descriptor to 
+ * Function that adds a new client file descriptor to
  * an array to keep track of, and perform graceful shutdown
- * Returns 0 on success, -1 if list is full 
+ * Returns 0 on success, -1 if list is full
  */
 int add_fd_to_list(client_list *clist, const int fd)
 {
     ssize_t curr = 0;
     // If last_free is -1 it means list is full
-    if(clist->last_free == -1)
+    if (clist->last_free == -1)
     {
         fprintf(stderr, "Client queue is full, rejecting connection %d\n", fd);
         return -1;
     }
-    
+
     // Add new file descriptor to last know free index
     clist->fd_list[clist->last_free] = fd;
 
     // Update the free index for next call
     curr = clist->last_free + 1;
-    for(; curr < MAX_ALIVE_CONN; curr++)
+    for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if(clist->fd_list[curr] == -1)
+        if (clist->fd_list[curr] == -1)
             break;
     }
     clist->last_free = curr;
-    if(curr >= MAX_ALIVE_CONN)
+    if (curr >= MAX_ALIVE_CONN)
     {
         clist->last_free = -1;
     }
@@ -90,27 +90,27 @@ int add_fd_to_list(client_list *clist, const int fd)
 }
 
 /**
- * Function to remove a client file descriptor from the 
+ * Function to remove a client file descriptor from the
  * an array whenever the connection is closed.
  * Returns 0 on success, -1 if client not found.
  */
 int remove_fd_from_list(client_list *clist, const int fd)
 {
     ssize_t curr = 0;
-    for(; curr < MAX_ALIVE_CONN; curr++)
+    for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if(clist->fd_list[curr] == fd)
+        if (clist->fd_list[curr] == fd)
             break;
     }
 
-    // Client not found 
-    if(curr >= MAX_ALIVE_CONN)
+    // Client not found
+    if (curr >= MAX_ALIVE_CONN)
         return -1;
-    
+
     // Reset the file descriptor to -1
     // Update the last_free position if necessary
     clist->fd_list[curr] = -1;
-    if(curr < clist->last_free)
+    if (curr < clist->last_free)
         clist->last_free = curr;
 
     return 0;
@@ -120,17 +120,15 @@ int remove_fd_from_list(client_list *clist, const int fd)
  * Debug function to write the logs to a file
  * Currently work in progress
  */
-int debug_log(const char *fmt, ...)
+void debug_log(const char *fmt, ...)
 {
-    int bytes_written = 0;
     va_list args;
     va_start(args, fmt);
 
-    bytes_written = vprintf(fmt, args);
-    fflush(stdout);
-    
+    vfprintf(log_file, fmt, args);
+    fflush(log_file);
+
     va_end(args);
-    return bytes_written;
 }
 
 /**
@@ -140,19 +138,19 @@ int debug_log(const char *fmt, ...)
  */
 int initiate_logging()
 {
-    if(access(DEBUG_LOG_FILE, F_OK) == 0)
+    if (access(DEBUG_LOG_FILE, F_OK) == 0)
     {
         rename(DEBUG_LOG_FILE, DEBUG_LOG_OLD);
     }
 
     log_file = fopen(DEBUG_LOG_FILE, "w");
-    if(log_file == NULL)
+    if (log_file == NULL)
     {
         perror("fopen");
         return -1;
     }
 
-    LOG("Logging is enabled\n");
+    LOG("Logging is enabled");
     return 0;
 }
 
@@ -162,9 +160,9 @@ int initiate_logging()
  */
 void shutdown_loggging()
 {
-    if(log_file == NULL)
+    if (log_file == NULL)
         return;
-    
+
     fflush(log_file);
     fclose(log_file);
     log_file = NULL;
@@ -172,13 +170,13 @@ void shutdown_loggging()
 
 /**
  * Function to perform cache cleanup
- * Releases all dynamically allocated memory and 
+ * Releases all dynamically allocated memory and
  * open file descriptors of asset files
  */
 void free_cache()
 {
     size_t i = 0;
-    if(g_cache == NULL)
+    if (g_cache == NULL)
         return;
     for (i = 0; i < g_cache_size; i++)
     {
@@ -193,12 +191,12 @@ void free_cache()
 }
 
 /**
- * Recursively add each file in the root directory 
+ * Recursively add each file in the root directory
  * and sub directories to the cache for faster access
  * If g_cache is NULL while calling this function then
- * it only counts and returns the number of files. 
+ * it only counts and returns the number of files.
  */
-size_t recursive_read(const char *root_path, const char* rel_path, size_t curr_count)
+size_t recursive_read(const char *root_path, const char *rel_path, size_t curr_count)
 {
     struct dirent *entry;
     struct stat statbuf;
@@ -207,7 +205,7 @@ size_t recursive_read(const char *root_path, const char* rel_path, size_t curr_c
     char fullpath[PATH_MAX];
     char new_rel_path[PATH_MAX];
 
-    if(g_cache == NULL)
+    if (g_cache == NULL)
         is_insert = false;
 
     dir = opendir(root_path);
@@ -220,11 +218,11 @@ size_t recursive_read(const char *root_path, const char* rel_path, size_t curr_c
     while ((entry = readdir(dir)) != NULL)
     {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                continue;
-        
-        // Construct path for files or nested directory calls 
+            continue;
+
+        // Construct path for files or nested directory calls
         snprintf(fullpath, PATH_MAX - 1, "%s/%s", root_path, entry->d_name);
-        if(rel_path[0] == '\0')
+        if (rel_path[0] == '\0')
             snprintf(new_rel_path, PATH_MAX - 1, "%s", entry->d_name);
         else
             snprintf(new_rel_path, PATH_MAX - 1, "%s/%s", rel_path, entry->d_name);
@@ -238,17 +236,18 @@ size_t recursive_read(const char *root_path, const char* rel_path, size_t curr_c
 
         if (S_ISDIR(statbuf.st_mode))
         {
-            // If entry is a directory then recuse on it  
+            // If entry is a directory then recuse on it
             curr_count = recursive_read(fullpath, new_rel_path, curr_count);
         }
         else
-        {   
-            if(is_insert)
+        {
+            if (is_insert)
             {
                 // Need to perform error checking here in future
                 g_cache[curr_count].file_name = strdup(new_rel_path);
-                g_cache[curr_count].file_size = (size_t) statbuf.st_size;
+                g_cache[curr_count].file_size = (size_t)statbuf.st_size;
                 g_cache[curr_count].fd = open(fullpath, O_RDONLY);
+                LOG("Adding file %s to cache", new_rel_path);
             }
             curr_count++;
         }
@@ -259,22 +258,22 @@ size_t recursive_read(const char *root_path, const char* rel_path, size_t curr_c
 
 /**
  * Construct the cache by calling above function twice
- * First to calculate the number of entries 
+ * First to calculate the number of entries
  * Later to populate the cache entries
  */
 size_t initiate_cache(const char *root_path)
 {
     size_t file_count = 0;
     file_count = recursive_read(root_path, "", 0);
-    if(file_count == 0)
+    if (file_count == 0)
     {
         fprintf(stderr, "No assets found at %s\n", root_path);
         return 0;
     }
 
     // Allocates an array of struct and intitalizes it to zero
-    g_cache = (page_cache *) calloc(file_count, sizeof(page_cache));
-    if(g_cache == NULL)
+    g_cache = (page_cache *)calloc(file_count, sizeof(page_cache));
+    if (g_cache == NULL)
     {
         perror("calloc");
         return 0;
@@ -283,18 +282,18 @@ size_t initiate_cache(const char *root_path)
 }
 
 /**
- * Retrive a cache entry given a potential 
+ * Retrive a cache entry given a potential
  * filepath relative to asset directory
  * Returns NULL if unable to find a matching cache entry
  */
-page_cache *get_page_cache(const char * path)
+page_cache *get_page_cache(const char *path)
 {
     size_t curr = 0;
-    if(*path == '\0')
+    if (*path == '\0')
         return get_page_cache("index.html");
-    for(; curr < g_cache_size; curr++)
+    for (; curr < g_cache_size; curr++)
     {
-        if(strcmp(g_cache[curr].file_name, path) == 0)
+        if (strcmp(g_cache[curr].file_name, path) == 0)
             return &g_cache[curr];
     }
     return NULL;

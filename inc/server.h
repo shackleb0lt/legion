@@ -67,7 +67,7 @@ int handle_http_request(int client_fd);
 int initiate_logging();
 void shutdown_loggging();
 // Do not call below function directly, use the LOG macro instead
-int debug_log(const char *fmt, ...);
+void debug_log(const char *fmt, ...);
 
 int set_nonblocking(const int fd);
 int add_fd_to_list(client_list *clist,const int fd);
