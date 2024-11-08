@@ -31,6 +31,8 @@
 extern size_t g_cache_size;
 extern page_cache *g_cache;
 
+FILE *log_file = NULL;
+
 /**
  * Convert a normal socket to a non-blocking socket.
  * Returns 0 on success, -1 otherwise
@@ -129,6 +131,43 @@ int debug_log(const char *fmt, ...)
     
     va_end(args);
     return bytes_written;
+}
+
+/**
+ * Check if previous log file existed,
+ * if yes rename it to a backup file
+ * and create new file for logging
+ */
+int initiate_logging()
+{
+    if(access(DEBUG_LOG_FILE, F_OK) == 0)
+    {
+        rename(DEBUG_LOG_FILE, DEBUG_LOG_OLD);
+    }
+
+    log_file = fopen(DEBUG_LOG_FILE, "w");
+    if(log_file == NULL)
+    {
+        perror("fopen");
+        return -1;
+    }
+
+    LOG("Logging is enabled\n");
+    return 0;
+}
+
+/**
+ * Clear write buffered log_file contents to memory
+ * and close the file pointer
+ */
+void shutdown_loggging()
+{
+    if(log_file == NULL)
+        return;
+    
+    fflush(log_file);
+    fclose(log_file);
+    log_file = NULL;
 }
 
 /**

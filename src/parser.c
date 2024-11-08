@@ -25,7 +25,12 @@
 #include "server.h"
 #include <sys/sendfile.h>
 
-int send_internal_server(const int client_fd)
+
+/**
+ * Sends back 500 response code to client and
+ * Returns -1 to instruct closing of this connection
+ */
+int send_internal_server_err(const int client_fd)
 {
     ssize_t buf_len = 0;
     char resp[128];
@@ -46,9 +51,13 @@ int send_internal_server(const int client_fd)
     send(client_fd, resp, (size_t)buf_len, 0);
     sendfile(client_fd, page_500->fd, NULL, page_500->file_size);
     lseek(page_500->fd, 0, SEEK_SET);
-    return 0;
+    return -1;
 }
 
+/**
+ * Sends back 404 response code to client
+ * Returns -1 to instruct closing of this connection
+ */
 int send_not_found(const int client_fd)
 {
     ssize_t buf_len = 0;
@@ -70,9 +79,13 @@ int send_not_found(const int client_fd)
     send(client_fd, resp, (size_t)buf_len, 0);
     sendfile(client_fd, page_404->fd, NULL, page_404->file_size);
     lseek(page_404->fd, 0, SEEK_SET);
-    return 0;
+    return -1;
 }
 
+/**
+ * Construct appropriate header and send back the requested file
+ * Returns 0 on success, -1 otherwise
+ */
 int send_response(const int client_fd, const page_cache * page, bool is_head)
 {
     ssize_t buf_len = 0;
@@ -94,6 +107,11 @@ int send_response(const int client_fd, const page_cache * page, bool is_head)
     return 0;
 }
 
+/**
+ * Parse the incoming message for the requested webpage
+ * And send back the page if it's found
+ * Returns 0 on success, -1 otherwise
+ */  
 int process_get_request(const int client_fd, char* buf, bool is_head)
 {
     ssize_t len =0;
@@ -105,11 +123,11 @@ int process_get_request(const int client_fd, char* buf, bool is_head)
 
     file_end = strchr(buf, ' ');
     if(file_end == NULL)
-        return send_internal_server(client_fd);
+        return send_internal_server_err(client_fd);
 
     len = file_end - buf;
     if(len < 0 || len >= PATH_MAX)
-        return send_internal_server(client_fd);;
+        return send_internal_server_err(client_fd);
     
     (*file_end) = '\0';
     page_reqd = get_page_cache(buf);
@@ -120,12 +138,17 @@ int process_get_request(const int client_fd, char* buf, bool is_head)
     return send_response(client_fd, page_reqd, is_head);
 }
 
+// Read the incoming HTTP Request
+// Check the method type of the request
+// And handle it accordingly
 int handle_http_request(const int client_fd)
 {
     int ret = 0;
     ssize_t bytes_read = 0;
     char buffer[BUFFER_SIZE];
-    bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+
+    // Below part needs better handling
+    bytes_read = read(client_fd, buffer, BUFFER_SIZE - 1);
     if (bytes_read <= 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
         return -1;
     buffer[bytes_read] = '\0';
@@ -135,6 +158,9 @@ int handle_http_request(const int client_fd)
 
     else if(strncmp(buffer, "HEAD", 4) == 0)
         ret = process_get_request(client_fd, buffer + 5, true);
+
+    else
+        ret = send_internal_server_err(client_fd);
 
     return ret;
 }

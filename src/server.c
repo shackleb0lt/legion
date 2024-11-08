@@ -92,10 +92,14 @@ int main(int argc, char *argv[])
     if (signal_setup() != 0)
         return EXIT_FAILURE;
 
+    ret = initiate_logging();
+    if(ret != 0)
+        return EXIT_FAILURE;
+
     // Build the cache from all files in assets folder
     g_cache_size = initiate_cache("assets");
     if (g_cache_size == 0)
-        return EXIT_FAILURE;
+        goto close_logs;
     
     // Struct to keeep track of active client connections
     memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
@@ -200,16 +204,19 @@ cleanup_server:
 cleanup_cache:
     // Release the cache 
     free_cache();
+close_logs:
+    shutdown_loggging();
     return 0;
 }
 
 /**
  * To do list,
- * Create a web portfolio
- * Support sending of non html files.
- * Implement other HTTP methods.
- * Use libssl to support https request.
+ * 
  * Write tests
+ * Create a web portfolio
+ * Support sending of non html files
+ * Maybe implement other HTTP methods.
+ * Use libssl to support https request.
  * Spawn a separate thread for accepting clients.
  * Add rate limiting, close client sockets after timeout,
  * Implement hashtable based g_cache for get request of files.

@@ -93,12 +93,13 @@ int initiate_server(const char *server_ip, const char *port)
     struct addrinfo hint = {0};
     struct addrinfo *res = NULL;
 
-    if (server_ip == NULL)
+    if (server_ip == NULL || port == NULL)
     {
-        fprintf(stderr, "No IP address available for host\n");
+        fprintf(stderr, "No IP address or port number available for host\n");
         return -1;
     }
 
+    // Fill the hint struct for desired connection
     hint.ai_family = AF_UNSPEC;
     hint.ai_socktype = SOCK_STREAM;
     hint.ai_flags = AI_NUMERICHOST;
@@ -110,6 +111,7 @@ int initiate_server(const char *server_ip, const char *port)
         return -1;
     }
 
+    // Open a TCP socket that can communicate using IPv4  
     server_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (server_fd < 0)
     {
@@ -117,10 +119,13 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
+    // Set to non blocking to avoid waiting for incoming connection
     ret = set_nonblocking(server_fd);
     if (ret == -1)
         goto err_cleanup;
 
+    // Allow process to reuse a socket that's 
+    // not entirely freed up by kernel
     ret = 1;
     ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &ret, sizeof(int));
     if (ret == -1)
@@ -129,6 +134,8 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
+    // Bind the socket to specified IP address and port
+    // All new incoming connections will be redirected to this port
     ret = bind(server_fd, res->ai_addr, res->ai_addrlen);
     if (ret < 0)
     {
@@ -136,6 +143,7 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
+    // Use this socket for accepting new connections not for requests
     ret = listen(server_fd, MAX_QUEUE_CONN);
     if (ret < 0)
     {
@@ -152,6 +160,10 @@ err_cleanup:
     return ret;
 }
 
+/**
+ * Function that accepts all new incoming connections
+ * on the server socket and adds them to epoll event listener 
+ */
 int accept_connections(const int server_fd, const int epoll_fd, client_list* clist)
 {
     int ret = 0, client_fd = 0;
@@ -164,6 +176,8 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
     char ipstr[INET6_ADDRSTRLEN];
 #endif
 
+    // Loop until all incoming connections have been accepted
+    // or rejected them if queue is full
     while(1)
     {
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
@@ -174,11 +188,12 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
         inet_ntop(temp->sin_family, &(temp->sin_addr), ipstr, sizeof(ipstr));
         debug_log("Incoming Connection from %s:%d \n", ipstr, ntohs(temp->sin_port));
 #endif
-
+        // Set non blocking to avoid waiting for incoming requests
         ret = set_nonblocking(client_fd);
         if(ret == -1)
             break;
 
+        // Add new connection to list of open connections
         ret = add_fd_to_list(clist, client_fd);
         if(ret == -1)
         {
@@ -186,6 +201,7 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
             continue;
         }
 
+        // Add new connection to epoll event listener
         ev.events = EPOLLIN | EPOLLET;
         ev.data.fd = client_fd;
         ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
@@ -197,6 +213,7 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list* cli
         }
     }
 
+    // Report error only if accept call failed 
     if (errno != EAGAIN && errno != EWOULDBLOCK)
     {
         perror("accept");
@@ -237,7 +254,6 @@ char *get_internet_facing_ipv6()
         perror("connect: ");
         close(dns_fd);
         return NULL;
-        ;
     }
 
     // Get the local address of the socket
@@ -251,7 +267,6 @@ char *get_internet_facing_ipv6()
 
     // Convert the IP address to a string
     inet_ntop(AF_INET6, &local_addr.sin6_addr, ip_addr, INET6_ADDRSTRLEN);
-    printf("Public-facing IP address: %s\n", ip_addr);
 
     close(dns_fd);
     return ip_addr;
