@@ -32,15 +32,19 @@ bool is_run = true;
 size_t g_cache_size = 0;
 page_cache *g_cache = NULL;
 
+// Store the global ssl context
+SSL_CTX * g_ssl_ctx = NULL;
+
+// List to store all active client connections
+client_list clist;
+
 /**
  *  Signal handler to chanage stop and
  * shutdown the server gracefully
  */
 void signal_handler(int sig)
 {
-    printf("Received %s signal\n"
-           "Initiating server shutdown...\n",
-           strsignal(sig));
+    LOG("Received %s signal\nInitiating server shutdown...", strsignal(sig));
     is_run = false;
 }
 
@@ -79,61 +83,58 @@ int signal_setup()
     return 0;
 }
 
-int main(int argc, char *argv[])
+/**
+ * Initialize structs for secured socket communication
+ * Setup the cert and key files for authentication
+ */
+int init_openssl_context()
 {
-    ssize_t nfds = 0, curr = 0;
-    int server_fd = 0, epoll_fd = 0;
+    int ret = 0;
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+
+    const SSL_METHOD *method = TLS_server_method();
+    g_ssl_ctx = SSL_CTX_new(method);
+    if (g_ssl_ctx == NULL)
+    {
+        ERR_print_errors_fp(stderr);
+        return -1;
+    }
+
+    // Load certificate and private key
+    ret = SSL_CTX_use_certificate_file(g_ssl_ctx, "/home/qubit/cf_cert.pem", SSL_FILETYPE_PEM);
+    if(ret != 1)
+        goto openssl_error;
+
+    ret = SSL_CTX_use_PrivateKey_file(g_ssl_ctx, "/home/qubit/cf_key.pem", SSL_FILETYPE_PEM);  
+    if (ret != 1)
+        goto openssl_error;
+
+    return 0;
+openssl_error:
+    ERR_print_errors_fp(stderr);
+    SSL_CTX_free(g_ssl_ctx);
+    g_ssl_ctx = NULL;
+    return -1;
+}
+
+void run_https_server(int server_fd)
+{
+    ssize_t nfds = 0;
+    ssize_t curr = 0;
+    int epoll_fd = 0;
     int ret = 0, curr_fd = 0;
-    client_list clist;
     unsigned int curr_event = 0;
     struct epoll_event ev = {0};
     struct epoll_event events[MAX_ALIVE_CONN] = {{0}};
-
-    if (signal_setup() != 0)
-        return EXIT_FAILURE;
-
-    ret = initiate_logging();
-    if (ret != 0)
-        return EXIT_FAILURE;
-
-    LOG("Signal handler has been registered");
-
-    // Build the cache from all files in assets folder
-    // For fast access while sending response
-    g_cache_size = initiate_cache("assets");
-    if (g_cache_size == 0)
-        goto close_logs;
-
-    // Struct to keeep track of active client connections
-    memset(clist.fd_list, -1, MAX_ALIVE_CONN * sizeof(int));
-    clist.last_free = 0;
-
-    // Initiate the server from default or
-    // User provided IP address annd Port
-    if (argc == 1)
-        server_fd = initiate_server(SERVER_IP_ADDR, SERVER_PORT);
-    else if (argc == 2)
-        server_fd = initiate_server(argv[1], SERVER_PORT);
-    else if (argc == 3)
-        server_fd = initiate_server(argv[1], argv[2]);
-    else
-    {
-        printf("Usage: %s [<ip_address>] [<port_num>]\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    // Check if server launch succeeded
-    if (server_fd < 0)
-    {
-        goto cleanup_cache;
-    }
 
     // Setup epoll to track incoming connection on server port
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1)
     {
         perror("epoll_create1");
-        goto cleanup_server;
+        return;
     }
 
     ev.events = EPOLLIN;
@@ -142,10 +143,11 @@ int main(int argc, char *argv[])
     if (ret == -1)
     {
         perror("epoll_ctl: server_fd");
-        goto cleanup_epoll;
+        close(epoll_fd);
+        return;
     }
 
-    LOG("epoll is ready to listen for incoming connetion on epoll_fd: %d", epoll_fd);
+    LOG("epoll listening for edge triggers on %d", epoll_fd);
     // Keep server alive until running status is true
     while (is_run)
     {
@@ -171,7 +173,7 @@ int main(int argc, char *argv[])
             if (curr_fd == server_fd)
             {
                 // Accept new connection and add it to epoll
-                ret = accept_connections(server_fd, epoll_fd, &clist);
+                ret = accept_connections(server_fd, epoll_fd);
                 if (ret == -1)
                     is_run = false;
                 continue;
@@ -186,29 +188,107 @@ int main(int argc, char *argv[])
             }
             // Close the socket otherwise
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, curr_fd, NULL);
-            remove_fd_from_list(&clist, curr_fd);
-            close(curr_fd);
+            remove_fd_from_list(curr_fd);
             LOG("Connection from client_fd:%d is now closed", curr_fd);
         }
     }
+    close(epoll_fd);
+}
+
+int main(int argc, char *argv[])
+{
+    int opt = 0;
+    size_t curr = 0;
+    int server_fd = 0, cfd = 0;
+    char * ssl_key_file = NULL;
+    char * ssl_cert_file = NULL;
+    char * server_ip = SERVER_IP_ADDR;
+    char * server_port = SERVER_PORT;
+    
+    if (signal_setup() != 0)
+        return EXIT_FAILURE;
+    
+    while (opt != -1)
+    {
+        opt = getopt(argc, argv, "c:k:i:p:");
+        switch (opt)
+        {
+            case 'c':
+                ssl_cert_file = optarg;
+                break;
+            case 'k':
+                ssl_key_file = optarg;
+                break;
+            case 'i':
+                server_ip = optarg;
+                break;
+            case 'p':
+                server_port = optarg;
+                break;
+            default:
+                fprintf(stderr, "Usage: %s -c cert.pem -k key.pem [-i <ip addr>] [-p <port>]\n", argv[0]);
+                return EXIT_FAILURE;
+        }
+    }
+
+    // Check that required arguments are provided
+    if (ssl_cert_file == NULL || ssl_key_file == NULL) 
+    {
+        fprintf(stderr, "Error: -c and -k options are required\n");
+        fprintf(stderr, "Usage: %s -c cert.pem -k key.pem [-i <ip addr>] [-p <port>]\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if(access(ssl_cert_file, F_OK | R_OK) != 0)
+    {
+        fprintf(stderr, "Error: ssl cert file %s cannot be accessed\n", ssl_cert_file);
+        return EXIT_FAILURE;
+    }
+
+    if(access(ssl_key_file, F_OK | R_OK) != 0)
+    {
+        fprintf(stderr, "Error: ssl key file %s cannot be accessed\n", ssl_key_file);
+        return EXIT_FAILURE;
+    }
+
+    if (initiate_logging() != 0)
+        return EXIT_FAILURE;
+
+    LOG("Signal handler has been registered");
+    LOG("Using cert file %s", ssl_cert_file);
+    LOG("Using key file %s", ssl_key_file);
+
+    // Initialise clist array with default values
+    init_client_list();
+
+    if(init_openssl_context() != 0)
+        goto close_logs;
+
+    // Build the cache from all files in assets folder
+    // For fast access while sending response
+    g_cache_size = initiate_cache("assets");
+    if (g_cache_size == 0)
+        goto cleanup_ssl;
+    LOG("File cache has been initialised");
+
+    // Initiate the server using the parsed input
+    server_fd = initiate_server(server_ip, server_port);
+    if (server_fd < 0)
+        goto cleanup_cache;
+
+    run_https_server(server_fd);
 
     sleep(1);
     // Close all open client connections
-    for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
-    {
-        if (clist.fd_list[curr] < 0)
-            continue;
-        close(clist.fd_list[curr]);
-    }
-cleanup_epoll:
-    // Close epoll socket
-    close(epoll_fd);
+    cleanup_client_list();
 cleanup_server:
     // Close Server socket
     close(server_fd);
 cleanup_cache:
     // Release the cache
     free_cache();
+cleanup_ssl:
+    SSL_CTX_free(g_ssl_ctx);
 close_logs:
     shutdown_loggging();
     return 0;
@@ -216,15 +296,17 @@ close_logs:
 
 /**
  * To do list,
- *
- * Write tests
+
  * Create a web portfolio
+ * 
  * Support sending of non html files
+ * 
  * Support sending compressed files
- * Maybe implement other HTTP methods.
+ * 
+ * Implement hashtable based g_cache for get request of files.
+ * 
  * Use libssl to support https request.
  * Spawn a separate thread for accepting clients.
  * Add rate limiting, close client sockets after timeout,
- * Implement hashtable based g_cache for get request of files.
- *
+
  */
