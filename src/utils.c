@@ -30,6 +30,7 @@
 
 extern size_t g_cache_size;
 extern page_cache *g_cache;
+extern client_list clist;
 
 FILE *log_file = NULL;
 
@@ -196,14 +197,14 @@ void free_cache()
  * If g_cache is NULL while calling this function then
  * it only counts and returns the number of files.
  */
-size_t recursive_read(const char *root_path, const char *rel_path, size_t curr_count)
+size_t recursive_read(const char *root_path, size_t curr_count)
 {
     struct dirent *entry;
     struct stat statbuf;
     DIR *dir = NULL;
     bool is_insert = true;
     char fullpath[PATH_MAX];
-    char new_rel_path[PATH_MAX];
+    ssize_t path_len = 0 ;
 
     if (g_cache == NULL)
         is_insert = false;
@@ -221,11 +222,12 @@ size_t recursive_read(const char *root_path, const char *rel_path, size_t curr_c
             continue;
 
         // Construct path for files or nested directory calls
-        snprintf(fullpath, PATH_MAX - 1, "%s/%s", root_path, entry->d_name);
-        if (rel_path[0] == '\0')
-            snprintf(new_rel_path, PATH_MAX - 1, "%s", entry->d_name);
-        else
-            snprintf(new_rel_path, PATH_MAX - 1, "%s/%s", rel_path, entry->d_name);
+        path_len = snprintf(fullpath, PATH_MAX - 1, "%s%s", root_path, entry->d_name);
+        if(path_len < 0 || path_len >= PATH_MAX)
+        {
+            fprintf(stderr, "Max recursion depth at path %s\n", root_path);
+            return 0;
+        }
 
         // Retrieve entry info
         if (stat(fullpath, &statbuf) == -1)
@@ -236,18 +238,23 @@ size_t recursive_read(const char *root_path, const char *rel_path, size_t curr_c
 
         if (S_ISDIR(statbuf.st_mode))
         {
-            // If entry is a directory then recuse on it
-            curr_count = recursive_read(fullpath, new_rel_path, curr_count);
+            // If entry is a directory then recurse on it
+            // Add a trailing / before passing
+            // Remove it after exiting for further use
+            fullpath[path_len] = '/';
+            fullpath[path_len + 1] = '\0';
+            curr_count = recursive_read(fullpath, curr_count);
+            fullpath[path_len] = '\0';
         }
         else
         {
             if (is_insert)
             {
                 // Need to perform error checking here in future
-                g_cache[curr_count].file_name = strdup(new_rel_path);
+                g_cache[curr_count].file_name = strdup(fullpath);
                 g_cache[curr_count].file_size = (size_t)statbuf.st_size;
                 g_cache[curr_count].fd = open(fullpath, O_RDONLY);
-                LOG("Adding file %s to cache", new_rel_path);
+                // printf("Adding file %s to cache\n", fullpath);
             }
             curr_count++;
         }
@@ -264,7 +271,7 @@ size_t recursive_read(const char *root_path, const char *rel_path, size_t curr_c
 size_t initiate_cache(const char *root_path)
 {
     size_t file_count = 0;
-    file_count = recursive_read(root_path, "", 0);
+    file_count = recursive_read(root_path, 0);
     if (file_count == 0)
     {
         fprintf(stderr, "No assets found at %s\n", root_path);
@@ -278,7 +285,7 @@ size_t initiate_cache(const char *root_path)
         perror("calloc");
         return 0;
     }
-    return recursive_read(root_path, "", 0);
+    return recursive_read(root_path, 0);
 }
 
 /**
@@ -289,11 +296,14 @@ size_t initiate_cache(const char *root_path)
 page_cache *get_page_cache(const char *path)
 {
     size_t curr = 0;
+    char * curr_path = NULL;
     if (*path == '\0')
-        return get_page_cache("index.html");
+        return get_page_cache(INDEX_PAGE);
+    
     for (; curr < g_cache_size; curr++)
     {
-        if (strcmp(g_cache[curr].file_name, path) == 0)
+        curr_path = g_cache[curr].file_name + DEFAULT_ASSET_LEN - 1;
+        if (strcmp(curr_path, path) == 0)
             return &g_cache[curr];
     }
     return NULL;

@@ -33,14 +33,12 @@ size_t g_cache_size = 0;
 page_cache *g_cache = NULL;
 
 /**
- *  Signal handler to chanage stop and
+ * Signal handler to catch signals and
  * shutdown the server gracefully
  */
 void signal_handler(int sig)
 {
-    printf("Received %s signal\n"
-           "Initiating server shutdown...\n",
-           strsignal(sig));
+    printf("Received %s signal\n Initiating server shutdown...\n", strsignal(sig));
     is_run = false;
 }
 
@@ -100,7 +98,7 @@ int main(int argc, char *argv[])
 
     // Build the cache from all files in assets folder
     // For fast access while sending response
-    g_cache_size = initiate_cache("assets");
+    g_cache_size = initiate_cache(DEFAULT_ASSET_PATH);
     if (g_cache_size == 0)
         goto close_logs;
 

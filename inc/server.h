@@ -44,6 +44,12 @@
 #define MAX_QUEUE_CONN 256
 #define MAX_ALIVE_CONN 4096
 #define BUFFER_SIZE 4096
+
+#define DEFAULT_ASSET_PATH "assets/"
+#define DEFAULT_ASSET_LEN  sizeof(DEFAULT_ASSET_PATH)
+#define INDEX_PAGE      "index.html"
+#define ERROR_404_PAGE  "error_404.html"
+#define ERROR_500_PAGE  "error_500.html"
 #define DEBUG_LOG_FILE "/tmp/legion.log"
 #define DEBUG_LOG_OLD "/tmp/legion_old.log"
 
