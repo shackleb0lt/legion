@@ -83,11 +83,11 @@ const char *get_internet_facing_ipv4()
 }
 
 /**
- * Converts ip version agnostic address to string 
+ * Converts ip version agnostic address to string
  */
 const char *get_ip_address(struct sockaddr *addr)
 {
-    short unsigned port = 0; 
+    short unsigned port = 0;
     void *ip_addr = NULL;
     struct sockaddr_in6 *ipv6 = NULL;
     struct sockaddr_in *ipv4 = NULL;
@@ -104,7 +104,6 @@ const char *get_ip_address(struct sockaddr *addr)
         ipv6 = (struct sockaddr_in6 *)addr;
         ip_addr = &(ipv6->sin6_addr);
         port = ntohs(ipv6->sin6_port);
-
     }
     // convert the IP to a string and print it:
     inet_ntop(addr->sa_family, ip_addr, ipstr, INET6_ADDRSTRLEN);
