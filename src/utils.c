@@ -30,6 +30,7 @@
 
 extern size_t g_cache_size;
 extern page_cache *g_cache;
+extern client_list clist;
 
 FILE *log_file = NULL;
 
@@ -56,35 +57,47 @@ int set_nonblocking(const int fd)
     return 0;
 }
 
+void init_client_list()
+{
+    ssize_t curr = 0;
+    clist.last_free = 0;
+    for (; curr < MAX_ALIVE_CONN; curr++)
+    {
+        clist.arr[curr].fd = -1;
+        clist.arr[curr].ctx = NULL;
+    }
+}
 /**
  * Function that adds a new client file descriptor to
  * an array to keep track of, and perform graceful shutdown
  * Returns 0 on success, -1 if list is full
  */
-int add_fd_to_list(client_list *clist, const int fd)
+int add_fd_to_list(const int fd, SSL_CTX * ctx)
 {
     ssize_t curr = 0;
     // If last_free is -1 it means list is full
-    if (clist->last_free == -1)
+    if (clist.last_free == -1)
     {
         fprintf(stderr, "Client queue is full, rejecting connection %d\n", fd);
         return -1;
     }
 
     // Add new file descriptor to last know free index
-    clist->fd_list[clist->last_free] = fd;
+    clist.arr[clist.last_free].fd = fd;
+    clist.arr[clist.last_free].ctx = ctx;
 
     // Update the free index for next call
-    curr = clist->last_free + 1;
+    curr = clist.last_free + 1;
     for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if (clist->fd_list[curr] == -1)
+        if (clist.arr[curr].fd == -1)
             break;
     }
-    clist->last_free = curr;
+
+    clist.last_free = curr;
     if (curr >= MAX_ALIVE_CONN)
     {
-        clist->last_free = -1;
+        clist.last_free = -1;
     }
     return 0;
 }
@@ -94,12 +107,12 @@ int add_fd_to_list(client_list *clist, const int fd)
  * an array whenever the connection is closed.
  * Returns 0 on success, -1 if client not found.
  */
-int remove_fd_from_list(client_list *clist, const int fd)
+int remove_fd_from_list(const int fd)
 {
     ssize_t curr = 0;
     for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if (clist->fd_list[curr] == fd)
+        if (clist.arr[curr].fd == fd)
             break;
     }
 
@@ -109,9 +122,11 @@ int remove_fd_from_list(client_list *clist, const int fd)
 
     // Reset the file descriptor to -1
     // Update the last_free position if necessary
-    clist->fd_list[curr] = -1;
-    if (curr < clist->last_free)
-        clist->last_free = curr;
+    clist.arr[curr].fd = -1;
+    clist.arr[clist.last_free].ctx = NULL;
+
+    if (curr < clist.last_free)
+        clist.last_free = curr;
 
     return 0;
 }

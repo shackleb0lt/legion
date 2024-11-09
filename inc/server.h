@@ -37,9 +37,8 @@
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-
-#define SERVER_IP_ADDR "127.0.0.1"
-#define SERVER_PORT "8080"
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #define MAX_QUEUE_CONN 256
 #define MAX_ALIVE_CONN 4096
@@ -53,10 +52,12 @@
 
 #define DEBUG_LOG_FILE "/tmp/legion.log"
 #define DEBUG_LOG_OLD "/tmp/legion_old.log"
+#define SERVER_IP_ADDR "127.0.0.1"
+#define SERVER_PORT "8080"
 
 typedef struct
 {
-    int fd_list[MAX_ALIVE_CONN];
+    SSL* ssl[MAX_ALIVE_CONN];
     ssize_t last_free;
 } client_list;
 
@@ -77,8 +78,10 @@ void shutdown_loggging();
 void debug_log(const char *fmt, ...);
 
 int set_nonblocking(const int fd);
-int add_fd_to_list(client_list *clist, const int fd);
-int remove_fd_from_list(client_list *clist, const int fd);
+void init_client_list();
+void cleanup_client_list();
+int add_client_ssl_to_list(SSL * client_ssl);
+int remove_client_ssl_from_list(SSL * client_ssl);
 
 void free_cache();
 size_t initiate_cache(const char *root_path);
@@ -86,7 +89,7 @@ page_cache *get_page_cache(const char *path);
 
 // net_utils.c
 int initiate_server(const char *server_ip, const char *port);
-int accept_connections(const int server_fd, const int epoll_fd, client_list *client_list);
+int accept_connections(const int server_fd, const int epoll_fd);
 const char *get_internet_facing_ipv4();
 
 #ifdef DEBUG

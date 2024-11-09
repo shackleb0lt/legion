@@ -153,7 +153,7 @@ int handle_http_request(const int client_fd)
         return -1;
     buffer[bytes_read] = '\0';
 
-    LOG("Incoming request from %d\n %s", client_fd, buffer);
+    LOG("Incoming request from %d\n%s", client_fd, buffer);
 
     if (strncmp(buffer, "GET", 3) == 0)
         ret = process_get_request(client_fd, buffer + 4, false);
