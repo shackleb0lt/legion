@@ -30,6 +30,8 @@
 #define SOCKADDR_4_SIZE sizeof(struct sockaddr_in)
 #define SOCKADDR_6_SIZE sizeof(struct sockaddr_in6)
 
+extern SSL_CTX * g_ssl_ctx;
+
 /**
  * Function to get an IPv4 address of the machine which
  * is used to communicate with internet
@@ -181,10 +183,7 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
-    printf("Server is active on %s\n", get_ip_address(res->ai_addr));
-    fflush(stdout);
-    LOG("Server is active on %s, server_fd %d",
-        get_ip_address(res->ai_addr), server_fd);
+    LOG("Server is active on %s", get_ip_address(res->ai_addr));
     freeaddrinfo(res);
     return server_fd;
 
@@ -198,12 +197,13 @@ err_cleanup:
  * Function that accepts all new incoming connections
  * on the server socket and adds them to epoll event listener
  */
-int accept_connections(const int server_fd, const int epoll_fd, client_list *clist)
+int accept_connections(const int server_fd, const int epoll_fd)
 {
     int ret = 0, client_fd = 0;
     struct sockaddr client_addr = {0};
     socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
+    SSL * client_ssl = NULL;
 
     // Loop until all incoming connections have been accepted
     // or rejected them if queue is full
@@ -212,29 +212,46 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list *cli
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
         if (client_fd == -1)
             break;
-
-        LOG("Incoming Connection from %s", get_ip_address(&client_addr));
+        
         // Set non blocking to avoid waiting for incoming requests
         ret = set_nonblocking(client_fd);
         if (ret == -1)
+        {
+            close(client_fd);
             break;
+        }
+        
+        client_ssl = SSL_new(g_ssl_ctx);
+        if(client_ssl == NULL)
+        {
+            fprintf(stderr, "SSL_new returned NULL\n");
+            close(client_fd);
+            ret = -1;
+            break;
+        }
+        SSL_set_fd(client_ssl, client_fd);
+
+        LOG("Incoming Connection from %s", get_ip_address(&client_addr));
 
         // Add new connection to list of open connections
-        ret = add_fd_to_list(clist, client_fd);
+        ret = add_client_ssl_to_list(client_ssl);
         if (ret == -1)
         {
             close(client_fd);
-            continue;
+            SSL_free(client_ssl);
+            break;
         }
 
         // Add new connection to epoll event listener
         ev.events = EPOLLIN | EPOLLET;
-        ev.data.fd = client_fd;
+        ev.data.ptr = client_ssl;
         ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
         if (ret == -1)
         {
+            remove_client_ssl_from_list(client_ssl);
+            close(client_fd);
+            SSL_free(client_ssl);
             perror("epoll_ctl: conn_sock");
-            remove_fd_from_list(clist, client_fd);
             break;
         }
         LOG("Connection accepted and bound to client_fd: %d", client_fd);
@@ -247,10 +264,6 @@ int accept_connections(const int server_fd, const int epoll_fd, client_list *cli
         return ret;
     }
 
-    if (ret == -1 && client_fd > 0)
-    {
-        close(client_fd);
-    }
     return ret;
 }
 

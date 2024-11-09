@@ -35,6 +35,9 @@ page_cache *g_cache = NULL;
 // Store the global ssl context
 SSL_CTX * g_ssl_ctx = NULL;
 
+// File descriptor for epoll event listener
+// int g_epoll_fd = 0;
+
 // List to store all active client connections
 client_list clist;
 
@@ -123,8 +126,9 @@ void run_https_server(int server_fd)
 {
     ssize_t nfds = 0;
     ssize_t curr = 0;
+    int client_fd = 0;
     int epoll_fd = 0;
-    int ret = 0, curr_fd = 0;
+    SSL * client_ssl = NULL;
     unsigned int curr_event = 0;
     struct epoll_event ev = {0};
     struct epoll_event events[MAX_ALIVE_CONN] = {{0}};
@@ -139,8 +143,7 @@ void run_https_server(int server_fd)
 
     ev.events = EPOLLIN;
     ev.data.fd = server_fd;
-    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev);
-    if (ret == -1)
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1)
     {
         perror("epoll_ctl: server_fd");
         close(epoll_fd);
@@ -162,57 +165,79 @@ void run_https_server(int server_fd)
             is_run = false;
             break;
         }
-        LOG("epoll_wait returned nfds:%d", nfds);
-        // If wait exited due to incoming connection or request
-        // Then handle it below
+        LOG("epoll_wait returned nfds: %d", nfds);
+
+        // Iterate through the list of sockets which triggered an event
         for (curr = 0; curr < nfds; curr++)
         {
-            curr_event = events[curr].events;
-            curr_fd = events[curr].data.fd;
             // New event on server_fd means incoming connection
-            if (curr_fd == server_fd)
+            if (events[curr].data.fd == server_fd)
             {
                 // Accept new connection and add it to epoll
-                ret = accept_connections(server_fd, epoll_fd);
-                if (ret == -1)
+                if (accept_connections(server_fd, epoll_fd) == -1)
                     is_run = false;
                 continue;
             }
-            // On a client socket only if there is incoming request
-            // then parse it and send response
-            else if (curr_event & EPOLLIN)
+
+            curr_event = events[curr].events;
+            client_ssl = (SSL*) events[curr].data.ptr;
+            client_fd = SSL_get_fd(client_ssl);
+            if (curr_event & EPOLLIN)
             {
-                ret = handle_http_request(curr_fd);
-                if (ret == 0)
+                // Perform SSL handshake if not yet done
+                if (SSL_accept(client_ssl) <= 0)
+                {
+                    ERR_print_errors_fp(stderr);
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    close(client_fd);
+                    SSL_free(client_ssl);
                     continue;
+                }
+                handle_http_request(client_ssl);
+                SSL_shutdown(client_ssl);
+                close(client_fd);
+                SSL_free(client_ssl);
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
             }
-            // Close the socket otherwise
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, curr_fd, NULL);
-            remove_fd_from_list(curr_fd);
-            LOG("Connection from client_fd:%d is now closed", curr_fd);
+            // Check if client socket has incoming data
+            // If yes parse the request and send response
+            // if(curr_event & EPOLLIN)
+            // {
+            //     if (handle_http_request(client_fd) == 0)
+            //         continue;
+            // }
+
+            // // Close the socket if handle_http_request returned -1
+            // // Either due to an error or if client requested to close the socket
+            // epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+            // remove_fd_from_list(client_fd);
+            // LOG("Connection from client_fd:%d is now closed", client_fd);
         }
     }
+    // Close epoll file descriptor and exit
     close(epoll_fd);
 }
 
 int main(int argc, char *argv[])
 {
     int opt = 0;
-    size_t curr = 0;
-    int server_fd = 0, cfd = 0;
-    char * ssl_key_file = NULL;
-    char * ssl_cert_file = NULL;
+    int server_fd = 0;
+    char * ssl_key_file = "../cf_key.pem";
+    char * ssl_cert_file = "../cf_cert.pem";
     char * server_ip = SERVER_IP_ADDR;
     char * server_port = SERVER_PORT;
+    char * assets = DEFAULT_ASSET_PATH;
     
     if (signal_setup() != 0)
         return EXIT_FAILURE;
     
     while (opt != -1)
     {
-        opt = getopt(argc, argv, "c:k:i:p:");
+        opt = getopt(argc, argv, "c:k:i:p:a:");
         switch (opt)
         {
+            case -1:
+                break;
             case 'c':
                 ssl_cert_file = optarg;
                 break;
@@ -225,8 +250,11 @@ int main(int argc, char *argv[])
             case 'p':
                 server_port = optarg;
                 break;
+            case 'a':
+                assets = optarg;
+                break;
             default:
-                fprintf(stderr, "Usage: %s -c cert.pem -k key.pem [-i <ip addr>] [-p <port>]\n", argv[0]);
+                fprintf(stderr, "Usage:%d %s -c cert.pem -k key.pem [-i <ip addr>] [-p <port>]\n", opt, argv[0]);
                 return EXIT_FAILURE;
         }
     }
@@ -266,7 +294,7 @@ int main(int argc, char *argv[])
 
     // Build the cache from all files in assets folder
     // For fast access while sending response
-    g_cache_size = initiate_cache(DEFAULT_ASSET_PATH);
+    g_cache_size = initiate_cache(assets);
     if (g_cache_size == 0)
         goto cleanup_ssl;
     LOG("File cache has been initialised");
@@ -281,7 +309,6 @@ int main(int argc, char *argv[])
     sleep(1);
     // Close all open client connections
     cleanup_client_list();
-cleanup_server:
     // Close Server socket
     close(server_fd);
 cleanup_cache:

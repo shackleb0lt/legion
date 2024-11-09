@@ -69,7 +69,7 @@ typedef struct
 } page_cache;
 
 // parser.c
-int handle_http_request(int client_fd);
+int handle_http_request(SSL * client_ssl);
 
 // utils.c
 int initiate_logging();
@@ -78,10 +78,10 @@ void shutdown_loggging();
 void debug_log(const char *fmt, ...);
 
 int set_nonblocking(const int fd);
-void init_client_list();
-void cleanup_client_list();
 int add_client_ssl_to_list(SSL * client_ssl);
 int remove_client_ssl_from_list(SSL * client_ssl);
+void init_client_list();
+void cleanup_client_list();
 
 void free_cache();
 size_t initiate_cache(const char *root_path);

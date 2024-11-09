@@ -54,3 +54,7 @@ dkms.conf
 
 # IDE files
 .vscode
+
+# Temporarily ignoring below lines
+CMakeLists.txt
+sanity_test.c

@@ -25,11 +25,40 @@
 #include "server.h"
 #include <sys/sendfile.h>
 
+int sendfile_to_client(SSL * client_ssl, int file_fd, size_t count)
+{
+    char buffer[BUFFER_SIZE];
+    int bytes_read = 0, bytes_written = 0;
+    int ssl_ret;
+    count = 0;
+    // Read file and send in chunks
+    while ((bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0)
+    {
+        bytes_written = 0;
+        while (bytes_written < bytes_read) {
+            ssl_ret = SSL_write(client_ssl, buffer + bytes_written, bytes_read - bytes_written);
+            if (ssl_ret <= 0) {
+                int ssl_error = SSL_get_error(client_ssl, ssl_ret);
+                fprintf(stderr, "SSL_write error: %d\n", ssl_error);
+                return -1;
+            }
+            bytes_written += ssl_ret;
+        }
+    }
+
+    if (bytes_read < 0) {
+        perror("Error reading file");
+        return -1;
+    }
+
+    close(file_fd);
+    return 0;
+}
 /**
  * Sends back 500 response code to client and
  * Returns -1 to instruct closing of this connection
  */
-int send_internal_server_err(const int client_fd)
+int send_internal_server_err(SSL * client_ssl)
 {
     ssize_t buf_len = 0;
     char resp[128];
@@ -47,8 +76,9 @@ int send_internal_server_err(const int client_fd)
     if (buf_len <= 0)
         return -1;
 
-    send(client_fd, resp, (size_t)buf_len, 0);
-    sendfile(client_fd, page_500->fd, NULL, page_500->file_size);
+    SSL_write(client_ssl, resp, (size_t)buf_len);
+    // sendfile(client_fd, page_500->fd, NULL, page_500->file_size);
+    sendfile_to_client(client_ssl, page_500->fd, page_500->file_size);
     lseek(page_500->fd, 0, SEEK_SET);
     return -1;
 }
@@ -57,7 +87,7 @@ int send_internal_server_err(const int client_fd)
  * Sends back 404 response code to client
  * Returns -1 to instruct closing of this connection
  */
-int send_not_found(const int client_fd)
+int send_not_found(SSL * client_ssl)
 {
     ssize_t buf_len = 0;
     char resp[128];
@@ -75,8 +105,9 @@ int send_not_found(const int client_fd)
     if (buf_len <= 0)
         return -1;
 
-    send(client_fd, resp, (size_t)buf_len, 0);
-    sendfile(client_fd, page_404->fd, NULL, page_404->file_size);
+    SSL_write(client_ssl, resp, (size_t)buf_len);
+    // sendfile(client_fd, page_404->fd, NULL, page_404->file_size);
+    sendfile_to_client(client_ssl, page_404->fd, page_404->file_size);
     lseek(page_404->fd, 0, SEEK_SET);
     return -1;
 }
@@ -85,7 +116,7 @@ int send_not_found(const int client_fd)
  * Construct appropriate header and send back the requested file
  * Returns 0 on success, -1 otherwise
  */
-int send_response(const int client_fd, const page_cache *page, bool is_head)
+int send_response(SSL * client_ssl, const page_cache *page, bool is_head)
 {
     ssize_t buf_len = 0;
     char resp[128];
@@ -97,10 +128,11 @@ int send_response(const int client_fd, const page_cache *page, bool is_head)
     if (buf_len <= 0)
         return -1;
 
-    send(client_fd, resp, (size_t)buf_len, 0);
+    SSL_write(client_ssl, resp, (size_t)buf_len);
     if (!is_head)
     {
-        sendfile(client_fd, page->fd, NULL, page->file_size);
+        // sendfile(client_fd, page->fd, NULL, page->file_size);
+        sendfile_to_client(client_ssl, page->fd, page->file_size);
         lseek(page->fd, 0, SEEK_SET);
     }
     return 0;
@@ -111,7 +143,7 @@ int send_response(const int client_fd, const page_cache *page, bool is_head)
  * And send back the page if it's found
  * Returns 0 on success, -1 otherwise
  */
-int process_get_request(const int client_fd, char *buf, bool is_head)
+int process_get_request(SSL * client_ssl, char *buf, bool is_head)
 {
     ssize_t len = 0;
     char *file_end = NULL;
@@ -122,47 +154,47 @@ int process_get_request(const int client_fd, char *buf, bool is_head)
 
     file_end = strchr(buf, ' ');
     if (file_end == NULL)
-        return send_internal_server_err(client_fd);
+        return send_internal_server_err(client_ssl);
 
     len = file_end - buf;
     if (len < 0 || len >= PATH_MAX)
-        return send_internal_server_err(client_fd);
+        return send_internal_server_err(client_ssl);
 
     (*file_end) = '\0';
     page_reqd = get_page_cache(buf);
     if (page_reqd == NULL)
     {
         LOG("Requested page %s not found", buf);
-        return send_not_found(client_fd);
+        return send_not_found(client_ssl);
     }
-    return send_response(client_fd, page_reqd, is_head);
+    return send_response(client_ssl, page_reqd, is_head);
 }
 
 // Read the incoming HTTP Request
 // Check the method type of the request
 // And handle it accordingly
-int handle_http_request(const int client_fd)
+int handle_http_request(SSL * client_ssl)
 {
     int ret = 0;
     ssize_t bytes_read = 0;
     char buffer[BUFFER_SIZE];
 
     // Below part needs better handling
-    bytes_read = read(client_fd, buffer, BUFFER_SIZE - 1);
+    bytes_read = SSL_read(client_ssl, buffer, BUFFER_SIZE - 1);
     if (bytes_read <= 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
         return -1;
     buffer[bytes_read] = '\0';
 
-    LOG("Incoming request from %d\n%s", client_fd, buffer);
+    LOG("Incoming request from %d\n%s", SSL_get_fd(client_ssl), buffer);
 
     if (strncmp(buffer, "GET", 3) == 0)
-        ret = process_get_request(client_fd, buffer + 4, false);
+        ret = process_get_request(client_ssl, buffer + 4, false);
 
     else if (strncmp(buffer, "HEAD", 4) == 0)
-        ret = process_get_request(client_fd, buffer + 5, true);
+        ret = process_get_request(client_ssl, buffer + 5, true);
 
     else
-        ret = send_internal_server_err(client_fd);
+        ret = send_internal_server_err(client_ssl);
 
     return ret;
 }

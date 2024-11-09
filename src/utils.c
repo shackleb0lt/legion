@@ -31,11 +31,11 @@
 extern size_t g_cache_size;
 extern page_cache *g_cache;
 extern client_list clist;
-
 FILE *log_file = NULL;
 
+
 /**
- * Convert a normal socket to a non-blocking socket.
+ * Convert a normal socket to a non-blocking socket
  * Returns 0 on success, -1 otherwise
  */
 int set_nonblocking(const int fd)
@@ -57,40 +57,54 @@ int set_nonblocking(const int fd)
     return 0;
 }
 
+/**
+ * Initiated list of to store incoming client connections
+ */
 void init_client_list()
 {
-    ssize_t curr = 0;
+    memset(clist.ssl, 0, sizeof(SSL *)*MAX_ALIVE_CONN);
     clist.last_free = 0;
-    for (; curr < MAX_ALIVE_CONN; curr++)
+}
+
+/**
+ * Releases all remaining connected clients at exit
+ */
+void cleanup_client_list()
+{
+    size_t curr = 0;
+    int client_fd = 0;
+    for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
     {
-        clist.arr[curr].fd = -1;
-        clist.arr[curr].ctx = NULL;
+        if(clist.ssl[curr] == NULL)
+            continue;
+        client_fd = SSL_get_fd(clist.ssl[curr]);
+        close(client_fd);
+        SSL_free(clist.ssl[curr]);
     }
 }
+
 /**
  * Function that adds a new client file descriptor to
  * an array to keep track of, and perform graceful shutdown
  * Returns 0 on success, -1 if list is full
  */
-int add_fd_to_list(const int fd, SSL_CTX * ctx)
+int add_client_ssl_to_list(SSL * client_ssl)
 {
     ssize_t curr = 0;
     // If last_free is -1 it means list is full
     if (clist.last_free == -1)
     {
-        fprintf(stderr, "Client queue is full, rejecting connection %d\n", fd);
+        fprintf(stderr, "Client queue is full, rejecting connection %d\n", SSL_get_fd(client_ssl));
         return -1;
     }
 
-    // Add new file descriptor to last know free index
-    clist.arr[clist.last_free].fd = fd;
-    clist.arr[clist.last_free].ctx = ctx;
+    clist.ssl[clist.last_free] = client_ssl;
 
     // Update the free index for next call
     curr = clist.last_free + 1;
     for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if (clist.arr[curr].fd == -1)
+        if (clist.ssl[curr] == NULL)
             break;
     }
 
@@ -107,12 +121,12 @@ int add_fd_to_list(const int fd, SSL_CTX * ctx)
  * an array whenever the connection is closed.
  * Returns 0 on success, -1 if client not found.
  */
-int remove_fd_from_list(const int fd)
+int remove_client_ssl_from_list(SSL * client_ssl)
 {
     ssize_t curr = 0;
     for (; curr < MAX_ALIVE_CONN; curr++)
     {
-        if (clist.arr[curr].fd == fd)
+        if (clist.ssl[curr] == client_ssl)
             break;
     }
 
@@ -120,11 +134,9 @@ int remove_fd_from_list(const int fd)
     if (curr >= MAX_ALIVE_CONN)
         return -1;
 
-    // Reset the file descriptor to -1
-    // Update the last_free position if necessary
-    clist.arr[curr].fd = -1;
-    clist.arr[clist.last_free].ctx = NULL;
+    clist.ssl[curr] = NULL;
 
+    // Update the last_free position if necessary
     if (curr < clist.last_free)
         clist.last_free = curr;
 

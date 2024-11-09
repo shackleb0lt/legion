@@ -1,7 +1,7 @@
 # Compiler and flags
 CC := gcc
 CFLAGS := -Wall -Wextra -Iinc
-LDFLAGS := -lpthread -lrt
+LDFLAGS := -lpthread -lrt -lssl -lcrypto
 
 # Build modes
 DEBUG_FLAGS :=-g -O0 -Wformat=2 -Wconversion -Wimplicit-fallthrough -DDEBUG
@@ -43,13 +43,13 @@ debug: $(TARGET)
 # Build executable target
 $(TARGET): $(OBJ_FILES) | $(BUILD_DIR)
 	@echo "Generating executable ...."
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ_FILES) -o $(TARGET) 
+	$(CC) $(CFLAGS) $(OBJ_FILES) -o $(TARGET) $(LDFLAGS)
 	@echo "Build successful: $(TARGET)"
 
 # Compile source files into object files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	@echo "Compiling object file $@"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR):
 	@echo "Creating Build Directory"
