@@ -39,7 +39,7 @@ SSL_CTX * g_ssl_ctx = NULL;
 client_list clist;
 
 /**
- * Signal handler to chanage stop and
+ * Signal handler to catch signals and
  * shutdown the server gracefully
  */
 void signal_handler(int sig)
