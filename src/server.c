@@ -39,7 +39,7 @@ SSL_CTX * g_ssl_ctx = NULL;
 client_list clist;
 
 /**
- *  Signal handler to chanage stop and
+ * Signal handler to chanage stop and
  * shutdown the server gracefully
  */
 void signal_handler(int sig)
@@ -266,7 +266,7 @@ int main(int argc, char *argv[])
 
     // Build the cache from all files in assets folder
     // For fast access while sending response
-    g_cache_size = initiate_cache("assets");
+    g_cache_size = initiate_cache(DEFAULT_ASSET_PATH);
     if (g_cache_size == 0)
         goto cleanup_ssl;
     LOG("File cache has been initialised");

@@ -36,7 +36,7 @@ int send_internal_server_err(const int client_fd)
     static page_cache *page_500 = NULL;
     if (page_500 == NULL)
     {
-        page_500 = get_page_cache("error_500.html");
+        page_500 = get_page_cache(ERROR_500_PAGE);
         if (page_500 == NULL)
             return -1;
     }
@@ -64,7 +64,7 @@ int send_not_found(const int client_fd)
     static page_cache *page_404 = NULL;
     if (page_404 == NULL)
     {
-        page_404 = get_page_cache("error_404.html");
+        page_404 = get_page_cache(ERROR_404_PAGE);
         if (page_404 == NULL)
             return -1;
     }

@@ -83,7 +83,7 @@ const char *get_internet_facing_ipv4()
 }
 
 /**
- * Converts ip version agnostic address to string 
+ * Converts ip version agnostic address to string
  */
 const char *get_ip_address(struct sockaddr *addr)
 {
