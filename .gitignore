@@ -2,7 +2,6 @@
 *.d
 
 # Object files
-bld/
 *.o
 *.ko
 *.obj
@@ -52,9 +51,12 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# Build Directories
+bld/
+
 # IDE files
 .vscode
 
 # Temporarily ignoring below lines
-CMakeLists.txt
 sanity_test.c
+assets/temp/*

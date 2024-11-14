@@ -28,14 +28,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 #include <sys/time.h>
+
+#include <error.h>
+#include <errno.h>
+
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
  
-#define PREFIX_LEN 40
-#define LOG_SIZE 1024
-#define LOG_FILE_LIMIT 8192
+#define PREFIX_LEN      40
+#define LOG_SIZE        1024
+#define LOG_FILE_LIMIT  8192
 #define DEBUG_LOG_FILE "/tmp/legion.log"
 #define DEBUG_LOG_OLD  "/tmp/old_legion.log"
 

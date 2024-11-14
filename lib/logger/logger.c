@@ -24,14 +24,15 @@
 
 #include "logger.h"
 
-int log_fd = -1;
-unsigned int line_count = 0;
+static int log_fd = -1;
+static unsigned int line_count = 0;
 
 static void rotate_logs()
 {
+    line_count = 0;
     close(log_fd);
     rename(DEBUG_LOG_FILE, DEBUG_LOG_OLD);
-    log_fd = open(DEBUG_LOG_FILE, O_WRONLY);
+    log_fd = open(DEBUG_LOG_FILE, O_CREAT | O_WRONLY ,  0644);
     if(log_fd < 0)
     {
         perror("rotate_logs: open");
@@ -69,7 +70,11 @@ int init_logging()
 void stop_logging()
 {
 #ifdef DEBUG
+    if(log_fd < 0)
+        return;
+
     close(log_fd);
+    log_fd = -1;
 #endif
 }
 
@@ -89,10 +94,19 @@ void logline(const char * prefix, const char *fmt, ...)
     if (localtime_r(&time_epoch, &time_local) == NULL)
         return;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
     buf_len = strftime(buffer, PREFIX_LEN, prefix, &time_local);
+#pragma GCC diagnostic pop
+
+    if(prefix[1] == 'E' && errno != 0)
+    {
+        buf_len += (size_t) snprintf(buffer + buf_len, LOG_SIZE - buf_len - 1, "%s ", strerror(errno));
+        errno = 0;
+    }
 
     va_start(args, fmt);
-    buf_len += (size_t) vsnprintf(buffer + buf_len, LOG_SIZE - buf_len, fmt, args);
+    buf_len += (size_t) vsnprintf(buffer + buf_len, LOG_SIZE - buf_len - 1, fmt, args);
     va_end(args);
 
     write(log_fd, buffer, buf_len);

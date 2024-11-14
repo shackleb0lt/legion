@@ -23,16 +23,22 @@
  */
 
 #include "server.h"
+
 #include <dirent.h>
-#include <fcntl.h>
-#include <stdarg.h>
 #include <sys/stat.h>
 
-extern size_t g_cache_size;
-extern page_cache *g_cache;
-extern client_list clist;
-FILE *log_file = NULL;
+static size_t g_cache_size;
+static page_cache *g_cache;
 
+extern client_list clist;
+
+int ssl_log_err(const char *errstr, size_t len, void *u)
+{
+    (void) len;
+    (void) u;
+    LOG_ERROR("%s", errstr);
+    return 0;
+}
 
 /**
  * Convert a normal socket to a non-blocking socket
@@ -44,14 +50,14 @@ int set_nonblocking(const int fd)
     ret = fcntl(fd, F_GETFL, 0);
     if (ret == -1)
     {
-        perror("fcntl: get flags");
+        LOG_ERROR("%s fcntl get", __func__);
         return -1;
     }
 
     ret = fcntl(fd, F_SETFL, ret | O_NONBLOCK);
     if (ret == -1)
     {
-        perror("fcntl: set non block");
+        LOG_ERROR("%s fcntl set", __func__);
         return -1;
     }
     return 0;
@@ -94,7 +100,7 @@ int add_client_ssl_to_list(SSL * client_ssl)
     // If last_free is -1 it means list is full
     if (clist.last_free == -1)
     {
-        fprintf(stderr, "Client queue is full, rejecting connection %d\n", SSL_get_fd(client_ssl));
+        LOG_ERROR("Client queue is full, rejecting connection");
         return -1;
     }
 
@@ -144,63 +150,11 @@ int remove_client_ssl_from_list(SSL * client_ssl)
 }
 
 /**
- * Debug function to write the logs to a file
- * Currently work in progress
- */
-void debug_log(const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-
-    vfprintf(log_file, fmt, args);
-    fflush(log_file);
-
-    va_end(args);
-}
-
-/**
- * Check if previous log file existed,
- * if yes rename it to a backup file
- * and create new file for logging
- */
-int initiate_logging()
-{
-    if (access(DEBUG_LOG_FILE, F_OK) == 0)
-    {
-        rename(DEBUG_LOG_FILE, DEBUG_LOG_OLD);
-    }
-
-    log_file = fopen(DEBUG_LOG_FILE, "w");
-    if (log_file == NULL)
-    {
-        perror("fopen");
-        return -1;
-    }
-
-    LOG("Logging is enabled");
-    return 0;
-}
-
-/**
- * Clear write buffered log_file contents to memory
- * and close the file pointer
- */
-void shutdown_loggging()
-{
-    if (log_file == NULL)
-        return;
-
-    fflush(log_file);
-    fclose(log_file);
-    log_file = NULL;
-}
-
-/**
  * Function to perform cache cleanup
  * Releases all dynamically allocated memory and
  * open file descriptors of asset files
  */
-void free_cache()
+void release_cache()
 {
     size_t i = 0;
     if (g_cache == NULL)
@@ -223,7 +177,7 @@ void free_cache()
  * If g_cache is NULL while calling this function then
  * it only counts and returns the number of files.
  */
-size_t recursive_read(const char *root_path, size_t curr_count)
+static size_t recursive_read(const char *root_path, size_t curr_count)
 {
     struct dirent *entry;
     struct stat statbuf;
@@ -238,7 +192,7 @@ size_t recursive_read(const char *root_path, size_t curr_count)
     dir = opendir(root_path);
     if (dir == NULL)
     {
-        perror("opendir");
+        LOG_ERROR("%s opendir", __func__);
         return 0;
     }
 
@@ -251,14 +205,14 @@ size_t recursive_read(const char *root_path, size_t curr_count)
         path_len = snprintf(fullpath, PATH_MAX - 1, "%s%s", root_path, entry->d_name);
         if(path_len < 0 || path_len >= PATH_MAX)
         {
-            fprintf(stderr, "Max recursion depth at path %s\n", root_path);
+            LOG_ERROR("Max recursion depth at path %s", root_path);
             return 0;
         }
 
         // Retrieve entry info
         if (stat(fullpath, &statbuf) == -1)
         {
-            perror("stat");
+            LOG_ERROR("%s stat", __func__);
             continue;
         }
 
@@ -280,7 +234,7 @@ size_t recursive_read(const char *root_path, size_t curr_count)
                 g_cache[curr_count].file_name = strdup(fullpath);
                 g_cache[curr_count].file_size = (size_t)statbuf.st_size;
                 g_cache[curr_count].fd = open(fullpath, O_RDONLY);
-                // printf("Adding file %s to cache\n", fullpath);
+                LOG_INFO("Adding file %s to cache", fullpath);
             }
             curr_count++;
         }
@@ -308,10 +262,11 @@ size_t initiate_cache(const char *root_path)
     g_cache = (page_cache *)calloc(file_count, sizeof(page_cache));
     if (g_cache == NULL)
     {
-        perror("calloc");
+        LOG_ERROR("%s calloc", __func__);
         return 0;
     }
-    return recursive_read(root_path, 0);
+    g_cache_size = recursive_read(root_path, 0); 
+    return g_cache_size;
 }
 
 /**

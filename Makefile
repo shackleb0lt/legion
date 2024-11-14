@@ -1,62 +1,106 @@
+# Comment below line to see actual linker and compiler flags while running makefile
+.SILENT:
+
 # Compiler and flags
 CC := gcc
 CFLAGS := -Wall -Wextra -Iinc
-LDFLAGS := -lpthread -lrt -lssl -lcrypto
+LDLIBS := -lpthread -lrt -lssl -lcrypto
 
-# Build modes
-DEBUG_FLAGS :=-g -O0 -Wformat=2 -Wconversion -Wimplicit-fallthrough -DDEBUG
-
-RELEASE_C_FLAGS := -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2
-RELEASE_LD_FLAGS := -s -Wl,-z,noexecstack -Wl,-z,defs -Wl,-z,nodump
-
-# RELEASE_C_FLAGS := -O2 -s -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE
-# RELEASE_LD_FLAGS :=-pie -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,-z,defs -Wl,-z,nodump
-
-# Project structure
 SRC_DIR := src
 INC_DIR := inc
+LIB_DIR := lib
 BUILD_DIR := bld
 
-# Output executable name
-TARGET := $(BUILD_DIR)/legion
+# Build modes and flags
+DEBUG_FLAGS := -O0 -g -Wformat=2 -Wconversion -Wimplicit-fallthrough -DDEBUG
+RELEASE_FLAGS := -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2
+RELEASE_LDFLAGS := -s -Wl,-z,noexecstack -Wl,-z,defs -Wl,-z,nodump
 
-# Find all source files
+# Library  directories
+THREADPOOL_SOURCES	:= $(wildcard $(LIB_DIR)/threadpool/*.c)
+HASHTALBE_SOURCES	:= $(wildcard $(LIB_DIR)/hashtable/*.c)
+LOGGGER_SOURCES		:= $(wildcard $(LIB_DIR)/logger/*.c)
+
+# Static libraries
+LIB_THREADPOOL 	:= $(BUILD_DIR)/libthreadpool.a
+LIB_HASHTABLE 	:= $(BUILD_DIR)/libhashtable.a
+LIB_LOGGER 		:= $(BUILD_DIR)/liblogger.a
+
+# Generated static libraries
+LIB_NAMES := -lthreadpool -lhashtable -llogger
+
+#Source Files
 SRC_FILES := $(wildcard $(SRC_DIR)/*.c)
-# Construct the list of object files
-OBJ_FILES := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC_FILES))
+
+# Object files
+SRC_OBJECTS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC_FILES))
+
+# Final executable
+TARGET := $(BUILD_DIR)/legion
 
 # Default target
 .PHONY: all
-all: release
-
-# Release build target
-.PHONY: release
-release: CFLAGS += $(RELEASE_C_FLAGS)
-release: LDFLAGS += $(RELEASE_LD_FLAGS)
-release: $(TARGET)
+all: debug
 
 # Debug build target
 .PHONY: debug
 debug: CFLAGS += $(DEBUG_FLAGS)
+debug: LDFLAGS += $(LDLIBS)
 debug: $(TARGET)
 
-# Build executable target
-$(TARGET): $(OBJ_FILES) | $(BUILD_DIR)
-	@echo "Generating executable ...."
-	$(CC) $(CFLAGS) $(OBJ_FILES) -o $(TARGET) $(LDFLAGS)
-	@echo "Build successful: $(TARGET)"
+# Release build target
+.PHONY: release
+release: CFLAGS += $(RELEASE_FLAGS)
+release: LDFLAGS += $(RELEASE_LDFLAGS) $(LDLIBS)
+release: $(TARGET)
 
-# Compile source files into object files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	@echo "Compiling object file $@"
+# Build executable target
+$(TARGET): $(LIB_THREADPOOL) $(LIB_HASHTABLE) $(LIB_LOGGER) $(SRC_OBJECTS)
+	@echo "Linking executable $(TARGET)"
+	$(CC) $(CFLAGS) $(SRC_OBJECTS) -L$(BUILD_DIR) $(LDFLAGS) $(LIB_NAMES) -o $(TARGET)
+
+# Build static libraries
+$(LIB_THREADPOOL): $(BUILD_DIR)/threadpool.o | $(BUILD_DIR)
+	@echo "Creating static library $(LIB_THREADPOOL)"
+	ar rcs $@ $<
+
+$(LIB_HASHTABLE): $(BUILD_DIR)/hashtable.o | $(BUILD_DIR)
+	@echo "Creating static library $(LIB_HASHTABLE)"
+	ar rcs $@ $<
+
+$(LIB_LOGGER): $(BUILD_DIR)/logger.o | $(BUILD_DIR)
+	@echo "Creating static library $(LIB_LOGGER)"
+	ar rcs $@ $<
+
+# Compile library object files
+$(BUILD_DIR)/threadpool.o: $(THREADPOOL_SOURCES) | $(BUILD_DIR)
+	@echo "Compiling $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/hashtable.o: $(HASHTALBE_SOURCES) | $(BUILD_DIR)
+	@echo "Compiling $<"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/logger.o: $(LOGGGER_SOURCES) | $(BUILD_DIR)
+	@echo "Compiling $<"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compile source object files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+	@echo "Compiling $<"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Create the build directory
 $(BUILD_DIR):
-	@echo "Creating Build Directory"
-	@mkdir -p $@
+	@echo "Creating build directory $(BUILD_DIR)"
+	mkdir -p $(BUILD_DIR)
 
 # Clean up build files
 .PHONY: clean
 clean:
-	@echo "Removing Build Directory and Contents"
-	@rm -rf $(BUILD_DIR)
+	@echo "Cleaning up build files"
+	rm -rf $(BUILD_DIR)
+
+# Keeping this here. might use it in future
+# RELEASE_C_FLAGS := -O2 -s -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE
+# RELEASE_LD_FLAGS :=-pie -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,-z,defs -Wl,-z,nodump

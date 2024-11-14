@@ -25,13 +25,9 @@
 #ifndef _SERVER_H
 #define _SERVER_H
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
+#include "logger.h"
+
 #include <stdbool.h>
-#include <unistd.h>
-#include <error.h>
-#include <errno.h>
 #include <limits.h>
 
 #include <sys/epoll.h>
@@ -40,20 +36,22 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#define MAX_QUEUE_CONN 256
-#define MAX_ALIVE_CONN 4096
+#define MAX_QUEUE_CONN 64
+#define MAX_ALIVE_CONN 256
 #define BUFFER_SIZE 4096
 
 #define DEFAULT_ASSET_PATH "assets/"
 #define DEFAULT_ASSET_LEN  sizeof(DEFAULT_ASSET_PATH)
+
 #define INDEX_PAGE      "index.html"
 #define ERROR_404_PAGE  "error_404.html"
 #define ERROR_500_PAGE  "error_500.html"
 
-#define DEBUG_LOG_FILE "/tmp/legion.log"
-#define DEBUG_LOG_OLD "/tmp/legion_old.log"
+#define DEFAULT_SSL_CERT_FILE "/home/qubit/cf_cert.pem" 
+#define DEFAULT_SSL_KEY_FILE  "/home/qubit/cf_key.pem"
+
 #define SERVER_IP_ADDR "127.0.0.1"
-#define SERVER_PORT "8080"
+#define SERVER_PORT    "8080"
 
 typedef struct
 {
@@ -68,35 +66,23 @@ typedef struct
     size_t file_size;
 } page_cache;
 
-// parser.c
-int handle_http_request(SSL * client_ssl);
+page_cache *get_page_cache(const char *path);
+size_t initiate_cache(const char *root_path);
+void release_cache();
 
-// utils.c
-int initiate_logging();
-void shutdown_loggging();
-// Do not call below function directly, use the LOG macro instead
-void debug_log(const char *fmt, ...);
 
-int set_nonblocking(const int fd);
-int add_client_ssl_to_list(SSL * client_ssl);
-int remove_client_ssl_from_list(SSL * client_ssl);
 void init_client_list();
 void cleanup_client_list();
+int add_client_ssl_to_list(SSL * client_ssl);
+int remove_client_ssl_from_list(SSL * client_ssl);
 
-void free_cache();
-size_t initiate_cache(const char *root_path);
-page_cache *get_page_cache(const char *path);
+int ssl_log_err(const char *errstr, size_t len, void *u);
+int set_nonblocking(const int fd);
 
-// net_utils.c
+void handle_http_request(void *arg);
+
 int initiate_server(const char *server_ip, const char *port);
 int accept_connections(const int server_fd, const int epoll_fd);
-const char *get_internet_facing_ipv4();
-
-#ifdef DEBUG
-#define LOG(fmt, ...) debug_log("[DEBUG] " fmt "\n", ##__VA_ARGS__);
-#else
-#define LOG(fmt, ...)
-#endif
 
 #ifdef IPV6_SERVER
 // char * get_internet_facing_ipv6();

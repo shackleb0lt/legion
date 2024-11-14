@@ -33,7 +33,7 @@ thpool_queue g_th_queue;
  */
 int add_task_to_queue(func_ptr_t f_ptr, void * arg)
 {
-    int next = 0;
+    size_t next = 0;
 
     if(f_ptr == NULL)
         return -1;
@@ -98,6 +98,7 @@ static void get_task_from_queue(th_task *task)
 static void * thread_worker(void *arg)
 {
     th_task task;
+    (void)arg;
     while(g_th_queue.is_run)
     {
         pthread_mutex_lock(&g_th_queue.qlock);
@@ -120,6 +121,10 @@ static void * thread_worker(void *arg)
     return NULL;
 }
 
+/**
+ * Initializes the threadpool queue and
+ * launches THREAD_COUNT threads waiting for incoming tasks
+ */
 int init_threadpool()
 {
     int res = 0;
@@ -166,6 +171,10 @@ int init_threadpool()
     return 0;
 }
 
+/**
+ * Signals all threads to stop execution
+ * and perform graceful shutdown
+ */
 void stop_threadpool()
 {
     size_t i = 0;

@@ -50,7 +50,7 @@ const char *get_internet_facing_ipv4()
     dns_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (dns_fd < 0)
     {
-        perror("socket: ");
+        LOG_ERROR("%s socket", __func__);   
         return NULL;
     }
     serv.sin_family = AF_INET;
@@ -63,7 +63,7 @@ const char *get_internet_facing_ipv4()
     // but sets up the socket with an appropriate route.
     if (connect(dns_fd, (struct sockaddr *)&serv, SOCKADDR_4_SIZE) < 0)
     {
-        perror("connect");
+        LOG_ERROR("%s connect", __func__);
         close(dns_fd);
         return NULL;
     }
@@ -72,14 +72,14 @@ const char *get_internet_facing_ipv4()
     socklen_t addr_len = SOCKADDR_4_SIZE;
     if (getsockname(dns_fd, (struct sockaddr *)&local_addr, &addr_len) == -1)
     {
-        perror("getsockname");
+        LOG_ERROR("%s getsockname", __func__);
         close(dns_fd);
         return NULL;
     }
 
     // Convert the IP address to a string
     inet_ntop(AF_INET, &local_addr.sin_addr, ip_addr, INET_ADDRSTRLEN);
-    LOG("Internet facing IP is %d", ip_addr);
+    LOG_INFO("Internet facing IP is %d", ip_addr);
     close(dns_fd);
     return ip_addr;
 }
@@ -127,7 +127,7 @@ int initiate_server(const char *server_ip, const char *port)
 
     if (server_ip == NULL || port == NULL)
     {
-        fprintf(stderr, "No IP address or port number available for host\n");
+        LOG_ERROR("No IP address or port number available for host\n");
         return -1;
     }
 
@@ -139,7 +139,7 @@ int initiate_server(const char *server_ip, const char *port)
     ret = getaddrinfo(server_ip, port, &hint, &res);
     if (ret != 0 || res == NULL)
     {
-        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(ret));
+        LOG_ERROR("getaddrinfo error: %s\n", gai_strerror(ret));
         return -1;
     }
 
@@ -147,22 +147,22 @@ int initiate_server(const char *server_ip, const char *port)
     server_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (server_fd < 0)
     {
-        perror("socket");
+        LOG_ERROR("%s socket", __func__);
         goto err_cleanup;
     }
 
     // Set to non blocking to avoid waiting for incoming connection
     ret = set_nonblocking(server_fd);
-    if (ret == -1)
+    if (ret != 0)
         goto err_cleanup;
 
     // Allow process to reuse a socket that's
     // not entirely freed up by kernel
     ret = 1;
     ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &ret, sizeof(int));
-    if (ret == -1)
+    if (ret != 0)
     {
-        perror("setsockopt");
+        LOG_ERROR("%s setsockopt", __func__);
         goto err_cleanup;
     }
 
@@ -171,7 +171,7 @@ int initiate_server(const char *server_ip, const char *port)
     ret = bind(server_fd, res->ai_addr, res->ai_addrlen);
     if (ret < 0)
     {
-        perror("bind");
+        LOG_ERROR("%s bind", __func__);
         goto err_cleanup;
     }
 
@@ -179,18 +179,18 @@ int initiate_server(const char *server_ip, const char *port)
     ret = listen(server_fd, MAX_QUEUE_CONN);
     if (ret < 0)
     {
-        perror("listen");
+        LOG_ERROR("%s listen", __func__);
         goto err_cleanup;
     }
 
-    LOG("Server is active on %s", get_ip_address(res->ai_addr));
+    LOG_INFO("Server is active on %s", get_ip_address(res->ai_addr));
     freeaddrinfo(res);
     return server_fd;
 
 err_cleanup:
     close(server_fd);
     freeaddrinfo(res);
-    return ret;
+    return -1;
 }
 
 /**
@@ -203,68 +203,75 @@ int accept_connections(const int server_fd, const int epoll_fd)
     struct sockaddr client_addr = {0};
     socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
-    SSL * client_ssl = NULL;
+    SSL *client_ssl = NULL;
+    bool is_err = false;
 
     // Loop until all incoming connections have been accepted
-    // or rejected them if queue is full
     while (1)
     {
+        client_ssl = NULL;
         client_fd = accept(server_fd, &client_addr, &client_addr_size);
         if (client_fd == -1)
-            break;
-        
-        // Set non blocking to avoid waiting for incoming requests
-        ret = set_nonblocking(client_fd);
-        if (ret == -1)
         {
-            close(client_fd);
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+            {
+                LOG_ERROR("%s accept", __func__);
+                is_err = true;
+            }
             break;
         }
-        
+        LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
+
+        // Set non blocking to avoid waiting for incoming requests
         client_ssl = SSL_new(g_ssl_ctx);
-        if(client_ssl == NULL)
+        if (client_ssl == NULL)
         {
-            fprintf(stderr, "SSL_new returned NULL\n");
-            close(client_fd);
-            ret = -1;
+            ERR_print_errors_cb(ssl_log_err, NULL);
             break;
         }
         SSL_set_fd(client_ssl, client_fd);
 
-        LOG("Incoming Connection from %s", get_ip_address(&client_addr));
-
-        // Add new connection to list of open connections
-        ret = add_client_ssl_to_list(client_ssl);
-        if (ret == -1)
+        ret = SSL_accept(client_ssl);
+        if (ret != 1)
         {
-            close(client_fd);
-            SSL_free(client_ssl);
+            ERR_print_errors_cb(ssl_log_err, NULL);
             break;
         }
+
+        ret = set_nonblocking(client_fd);
+        if (ret != 0)
+            break;
 
         // Add new connection to epoll event listener
         ev.events = EPOLLIN | EPOLLET;
         ev.data.ptr = client_ssl;
         ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
-        if (ret == -1)
+        if (ret != 0)
         {
-            remove_client_ssl_from_list(client_ssl);
-            close(client_fd);
-            SSL_free(client_ssl);
-            perror("epoll_ctl: conn_sock");
+            LOG_ERROR("%s epoll_ctl", __func__);
             break;
         }
-        LOG("Connection accepted and bound to client_fd: %d", client_fd);
+        // Below function needs to limit connections in future
+        add_client_ssl_to_list(client_ssl);
+        LOG_INFO("Connection accepted and bound to client_fd: %d", client_fd);
     }
 
-    // Report error only if accept call failed
-    if (errno != EAGAIN && errno != EWOULDBLOCK)
+    if (client_fd != -1)
     {
-        perror("accept");
-        return ret;
+        close(client_fd);
+        is_err = true;
     }
 
-    return ret;
+    if (client_ssl != NULL)
+    {
+        SSL_free(client_ssl);
+        is_err = true;
+    }
+
+    if (is_err)
+        return -1;
+
+    return 0;
 }
 
 #ifdef IPV6_SERVER
@@ -278,7 +285,7 @@ char *get_internet_facing_ipv6()
     dns_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (dns_fd < 0)
     {
-        perror("socket: ");
+        LOG_ERROR("%s socket", __func__);   
         return NULL;
     }
     serv.sin6_family = AF_INET6;
@@ -291,7 +298,7 @@ char *get_internet_facing_ipv6()
     // but sets up the socket with an appropriate route.
     if (connect(dns_fd, (struct sockaddr *)&serv, SOCKADDR_6_SIZE) < 0)
     {
-        perror("connect: ");
+        LOG_ERROR("%s connect", __func__);
         close(dns_fd);
         return NULL;
     }
@@ -300,7 +307,7 @@ char *get_internet_facing_ipv6()
     socklen_t addr_len = SOCKADDR_6_SIZE;
     if (getsockname(dns_fd, (struct sockaddr *)&local_addr, &addr_len) == -1)
     {
-        perror("getsockname");
+        LOG_ERROR("%s getsockname", __func__);
         close(dns_fd);
         return NULL;
     }
