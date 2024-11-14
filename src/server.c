@@ -303,16 +303,9 @@ int main(int argc, char *argv[])
 /**
  * To do list,
 
- * Create a web portfolio
- *
- * Support sending of non html files
- *
+ * Create a web portfolio 
  * Support sending compressed files
- *
- * Implement hashtable based g_cache for get request of files.
- *
- * Use libssl to support https request.
- * Spawn a separate thread for accepting clients.
+ * Support sending of non html files
  * Add rate limiting, close client sockets after timeout,
 
  */
