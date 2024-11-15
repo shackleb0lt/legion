@@ -53,6 +53,8 @@
 #define SERVER_IP_ADDR "127.0.0.1"
 #define SERVER_PORT    "8080"
 
+#define TLS_TIMEOUT_SEC 4
+
 typedef struct
 {
     SSL* ssl[MAX_ALIVE_CONN];

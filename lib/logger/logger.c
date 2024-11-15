@@ -109,7 +109,7 @@ void logline(const char * prefix, const char *fmt, ...)
     buf_len += (size_t) vsnprintf(buffer + buf_len, LOG_SIZE - buf_len - 1, fmt, args);
     va_end(args);
 
-    write(log_fd, buffer, buf_len);
+    buf_len = (size_t) write(log_fd, buffer, buf_len);
 
     line_count++;
     if(line_count == LOG_FILE_LIMIT)

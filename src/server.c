@@ -41,6 +41,9 @@ client_list clist;
  */
 void signal_handler(int sig)
 {
+    #ifndef DEBUG
+    (void) sig;
+    #endif
     LOG_INFO("Received %s signal. Initiating server shutdown...", strsignal(sig));
     server_run = false;
 }
@@ -188,7 +191,9 @@ void run_https_server(int server_fd)
             // If wait didn't exit due to interrupt signal
             // Then error happened, in any case exit the loop
             if (errno != EINTR)
+            {
                 LOG_ERROR("%s epoll_wait", __func__);
+            }
             server_run = false;
             break;
         }
@@ -306,6 +311,5 @@ int main(int argc, char *argv[])
  * Create a web portfolio 
  * Support sending compressed files
  * Support sending of non html files
- * Add rate limiting, close client sockets after timeout,
-
+ * Add rate limiting, close client sockets after timeout
  */

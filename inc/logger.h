@@ -49,8 +49,8 @@ void stop_logging();
 void logline(const char *prefix, const char *fmt, ...);
 
 #ifdef DEBUG
-#define LOG_INFO(fmt, ...) logline("[INFO] [%Y-%m-%d %H:%M:%S] ", fmt "\n", ##__VA_ARGS__);
-#define LOG_ERROR(fmt, ...) logline("[ERROR] [%Y-%m-%d %H:%M:%S] ", fmt "\n", ##__VA_ARGS__);
+#define LOG_INFO(fmt, ...) logline("[INFO] [%Y-%m-%d %H:%M:%S] ", fmt "\n", ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...) logline("[ERROR] [%Y-%m-%d %H:%M:%S] ", fmt "\n", ##__VA_ARGS__)
 #else
 #define LOG_INFO(fmt, ...)
 #define LOG_ERROR(fmt, ...)

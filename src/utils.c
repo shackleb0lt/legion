@@ -36,6 +36,9 @@ int ssl_log_err(const char *errstr, size_t len, void *u)
 {
     (void) len;
     (void) u;
+#ifndef DEBUG
+    (void) errstr;
+#endif
     LOG_ERROR("%s", errstr);
     return 0;
 }

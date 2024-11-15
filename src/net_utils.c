@@ -199,12 +199,15 @@ err_cleanup:
  */
 int accept_connections(const int server_fd, const int epoll_fd)
 {
+    bool is_err = false;
+    SSL *client_ssl = NULL;
     int ret = 0, client_fd = 0;
     struct sockaddr client_addr = {0};
-    socklen_t client_addr_size = sizeof(struct sockaddr);
     struct epoll_event ev = {0};
-    SSL *client_ssl = NULL;
-    bool is_err = false;
+    struct timeval timeout = {0};
+    socklen_t client_addr_size = sizeof(struct sockaddr);
+
+    timeout.tv_sec = TLS_TIMEOUT_SEC;
 
     // Loop until all incoming connections have been accepted
     while (1)
@@ -221,6 +224,20 @@ int accept_connections(const int server_fd, const int epoll_fd)
             break;
         }
         LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
+
+        ret = setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+        if ( ret != 0)
+        {
+            LOG_ERROR("%s setsockopt SO_RCVTIMEO failed", __func__);
+            break;
+        }
+
+        ret = setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+        if (ret != 0)
+        {
+            LOG_ERROR("%s setsockopt SO_SNDTIMEO failed", __func__);
+            break;
+        }
 
         // Set non blocking to avoid waiting for incoming requests
         client_ssl = SSL_new(g_ssl_ctx);
@@ -252,7 +269,12 @@ int accept_connections(const int server_fd, const int epoll_fd)
             break;
         }
         // Below function needs to limit connections in future
-        add_client_ssl_to_list(client_ssl);
+        ret = add_client_ssl_to_list(client_ssl);
+        if(ret == -1)
+        {
+            close(client_fd);
+            SSL_free(client_ssl);
+        }
         LOG_INFO("Connection accepted and bound to client_fd: %d", client_fd);
     }
 

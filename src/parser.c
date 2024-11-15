@@ -185,6 +185,7 @@ void handle_http_request(void *arg)
         return;
     }
     buffer[bytes_read] = '\0';
+    // LOG_INFO("%s", buffer);
 
     if (strncmp(buffer, "GET", 3) == 0)
         ret = process_get_request(client_ssl, buffer + 4, false);
@@ -195,12 +196,9 @@ void handle_http_request(void *arg)
     else
         ret = send_internal_server_err(client_ssl);
 
-    if (ret != 0)
-    {
-        remove_client_ssl_from_list(client_ssl);
-        SSL_shutdown(client_ssl);
-        close(SSL_get_fd(client_ssl));
-        SSL_free(client_ssl);
-    }
-    // return ret;
+
+    remove_client_ssl_from_list(client_ssl);
+    SSL_shutdown(client_ssl);
+    close(SSL_get_fd(client_ssl));
+    SSL_free(client_ssl);
 }
