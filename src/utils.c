@@ -26,20 +26,69 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 
 static size_t g_cache_size;
 static page_cache *g_cache;
-
-extern client_list clist;
+static client_info clist[MAX_FD_COUNT];
 
 int ssl_log_err(const char *errstr, size_t len, void *u)
 {
-    (void) len;
-    (void) u;
+    (void)len;
+    (void)u;
 #ifndef DEBUG
-    (void) errstr;
+    (void)errstr;
 #endif
     LOG_ERROR("%s", errstr);
+    return 0;
+}
+
+/**
+ * Function that limits the total open file descriptor
+ * for this process to MAX_FD_COUNT
+ */
+int set_fd_limit()
+{
+    int ret = 0;
+    struct rlimit rl;
+
+    // Get the current limit
+    ret = getrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s: Retrieval getrlimit", __func__);
+        return -1;
+    }
+
+    if (rl.rlim_cur == MAX_FD_COUNT && rl.rlim_max == MAX_FD_COUNT)
+        return 0;
+
+    // Set a new soft and hard limit for open files
+    rl.rlim_cur = MAX_FD_COUNT;
+    rl.rlim_max = MAX_FD_COUNT;
+
+    // Set the new limit
+    ret = setrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s: setrlimit", __func__);
+        return -1;
+    }
+
+    // Verify the change
+    ret = getrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s: Verify getrlimit", __func__);
+        return -1;
+    }
+
+    if (rl.rlim_cur != MAX_FD_COUNT || rl.rlim_max != MAX_FD_COUNT)
+    {
+        LOG_ERROR("%s: Verification failed soft %ld, hard = %ld\n",
+                  __func__, rl.rlim_cur, rl.rlim_max);
+        return -1;
+    }
     return 0;
 }
 
@@ -71,8 +120,13 @@ int set_nonblocking(const int fd)
  */
 void init_client_list()
 {
-    memset(clist.ssl, 0, sizeof(SSL *)*MAX_ALIVE_CONN);
-    clist.last_free = 0;
+    size_t curr = 0;
+    for (curr = 0; curr < MAX_FD_COUNT; curr++)
+    {
+        clist[curr].fd = -1;
+        clist[curr].ssl = NULL;
+        clist[curr].keep_alive = false;
+    }
 }
 
 /**
@@ -81,75 +135,70 @@ void init_client_list()
 void cleanup_client_list()
 {
     size_t curr = 0;
-    int client_fd = 0;
-    for (curr = 0; curr < MAX_ALIVE_CONN; curr++)
+
+    for (curr = 0; curr < MAX_FD_COUNT; curr++)
     {
-        if(clist.ssl[curr] == NULL)
-            continue;
-        client_fd = SSL_get_fd(clist.ssl[curr]);
-        close(client_fd);
-        SSL_free(clist.ssl[curr]);
+        if (clist[curr].ssl != NULL)
+        {
+            SSL_free(clist[curr].ssl);
+            clist[curr].ssl = NULL;
+        }
+
+        if (clist[curr].fd > 0)
+        {
+            close(clist[curr].fd);
+            clist[curr].fd = -1;
+        }
     }
 }
 
 /**
- * Function that adds a new client file descriptor to
- * an array to keep track of, and perform graceful shutdown
- * Returns 0 on success, -1 if list is full
+ *
  */
-int add_client_ssl_to_list(SSL * client_ssl)
+int add_client_info(const int client_fd, SSL *client_ssl)
 {
-    ssize_t curr = 0;
-    // If last_free is -1 it means list is full
-    if (clist.last_free == -1)
+    if (client_fd < 0 || client_fd >= MAX_FD_COUNT || client_ssl == NULL)
     {
-        LOG_ERROR("Client queue is full, rejecting connection");
+        LOG_ERROR("%s: Invalid client details received", __func__);
         return -1;
     }
-
-    clist.ssl[clist.last_free] = client_ssl;
-
-    // Update the free index for next call
-    curr = clist.last_free + 1;
-    for (; curr < MAX_ALIVE_CONN; curr++)
-    {
-        if (clist.ssl[curr] == NULL)
-            break;
-    }
-
-    clist.last_free = curr;
-    if (curr >= MAX_ALIVE_CONN)
-    {
-        clist.last_free = -1;
-    }
+    clist[client_fd].fd = client_fd;
+    clist[client_fd].ssl = client_ssl;
+    clist[client_fd].keep_alive = false;
     return 0;
 }
 
 /**
- * Function to remove a client file descriptor from the
- * an array whenever the connection is closed.
- * Returns 0 on success, -1 if client not found.
+ *
  */
-int remove_client_ssl_from_list(SSL * client_ssl)
+void remove_client_info(client_info * cinfo)
 {
-    ssize_t curr = 0;
-    for (; curr < MAX_ALIVE_CONN; curr++)
+    if (cinfo == NULL)
     {
-        if (clist.ssl[curr] == client_ssl)
-            break;
+        LOG_ERROR("%s: Invalid client details received", __func__);
+        return;
     }
 
-    // Client not found
-    if (curr >= MAX_ALIVE_CONN)
-        return -1;
+    SSL_shutdown(cinfo->ssl);
+    close(cinfo->fd);
+    SSL_free(cinfo->ssl);
 
-    clist.ssl[curr] = NULL;
+    cinfo->fd = -1;
+    cinfo->ssl = NULL;
+    cinfo->keep_alive = false;
+}
 
-    // Update the last_free position if necessary
-    if (curr < clist.last_free)
-        clist.last_free = curr;
-
-    return 0;
+/**
+ * 
+ */
+client_info *get_client_info(const int client_fd)
+{
+    if (client_fd < 0 || client_fd >= MAX_FD_COUNT || clist[client_fd].fd < 0)
+    {
+        LOG_ERROR("%s: Invalid client details received", __func__);
+        return NULL;
+    }
+    return &clist[client_fd];
 }
 
 /**
@@ -187,7 +236,7 @@ static size_t recursive_read(const char *root_path, size_t curr_count)
     DIR *dir = NULL;
     bool is_insert = true;
     char fullpath[PATH_MAX];
-    ssize_t path_len = 0 ;
+    ssize_t path_len = 0;
 
     if (g_cache == NULL)
         is_insert = false;
@@ -206,7 +255,7 @@ static size_t recursive_read(const char *root_path, size_t curr_count)
 
         // Construct path for files or nested directory calls
         path_len = snprintf(fullpath, PATH_MAX - 1, "%s%s", root_path, entry->d_name);
-        if(path_len < 0 || path_len >= PATH_MAX)
+        if (path_len < 0 || path_len >= PATH_MAX)
         {
             LOG_ERROR("Max recursion depth at path %s", root_path);
             return 0;
@@ -268,7 +317,7 @@ size_t initiate_cache(const char *root_path)
         LOG_ERROR("%s calloc", __func__);
         return 0;
     }
-    g_cache_size = recursive_read(root_path, 0); 
+    g_cache_size = recursive_read(root_path, 0);
     return g_cache_size;
 }
 
@@ -280,10 +329,10 @@ size_t initiate_cache(const char *root_path)
 page_cache *get_page_cache(const char *path)
 {
     size_t curr = 0;
-    char * curr_path = NULL;
+    char *curr_path = NULL;
     if (*path == '\0')
         return get_page_cache(INDEX_PAGE);
-    
+
     for (; curr < g_cache_size; curr++)
     {
         curr_path = g_cache[curr].file_name + DEFAULT_ASSET_LEN - 1;

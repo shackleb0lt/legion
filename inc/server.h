@@ -53,7 +53,15 @@
 #define SERVER_IP_ADDR "127.0.0.1"
 #define SERVER_PORT    "8080"
 
+#define MAX_FD_COUNT    4096
 #define TLS_TIMEOUT_SEC 4
+
+typedef struct
+{
+    int fd;
+    SSL *ssl;
+    bool keep_alive;
+} client_info;
 
 typedef struct
 {
@@ -72,11 +80,12 @@ page_cache *get_page_cache(const char *path);
 size_t initiate_cache(const char *root_path);
 void release_cache();
 
-
+int set_fd_limit();
 void init_client_list();
 void cleanup_client_list();
-int add_client_ssl_to_list(SSL * client_ssl);
-int remove_client_ssl_from_list(SSL * client_ssl);
+void remove_client_info(client_info * cinfo);
+int add_client_info(const int client_fd, SSL *client_ssl);
+client_info *get_client_info(const int client_fd);
 
 int ssl_log_err(const char *errstr, size_t len, void *u);
 int set_nonblocking(const int fd);

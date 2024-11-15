@@ -32,18 +32,15 @@ bool server_run = true;
 // Store the global ssl context
 SSL_CTX *g_ssl_ctx = NULL;
 
-// List to store all active client connections
-client_list clist;
-
 /**
  * Signal handler to catch signals and
  * shutdown the server gracefully
  */
 void signal_handler(int sig)
 {
-    #ifndef DEBUG
-    (void) sig;
-    #endif
+#ifndef DEBUG
+    (void)sig;
+#endif
     LOG_INFO("Received %s signal. Initiating server shutdown...", strsignal(sig));
     server_run = false;
 }
@@ -147,17 +144,15 @@ int init_openssl_context(const char *cert_file, const char *key_file)
     return 0;
 }
 
-
 /**
- * Worker function to accept and serve HTTPS Requests 
+ * Worker function to accept and serve HTTPS Requests
  */
 void run_https_server(int server_fd)
 {
     ssize_t nfds = 0;
     ssize_t curr = 0;
-    int client_fd = 0;
     int epoll_fd = 0;
-    SSL *client_ssl = NULL;
+    client_info * cinfo = NULL;
     unsigned int curr_event = 0;
     struct epoll_event ev = {0};
     struct epoll_event events[MAX_ALIVE_CONN] = {{0}};
@@ -214,19 +209,22 @@ void run_https_server(int server_fd)
             }
 
             curr_event = events[curr].events;
-            client_ssl = (SSL *)events[curr].data.ptr;
-            client_fd = SSL_get_fd(client_ssl);
+            cinfo = get_client_info(events[curr].data.fd);
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, cinfo->fd, NULL);
+/////////////////////////////////////////////////////////////////////
+            if(cinfo == NULL)
+                close(cinfo->fd);
+/////////////////////////////////////////////////////////////////////
+
             if (curr_event && POLL_IN)
             {
-                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
-                add_task_to_queue(handle_http_request, client_ssl);
+                add_task_to_queue(handle_http_request, cinfo);
             }
         }
     }
     // Close epoll file descriptor and exit
     close(epoll_fd);
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -279,6 +277,9 @@ int main(int argc, char *argv[])
     if (atexit(cleanup_server) != 0)
         return EXIT_FAILURE;
 
+    if (set_fd_limit() != 0)
+        return EXIT_FAILURE;
+
     if (init_logging() != 0)
         return EXIT_FAILURE;
 
@@ -288,7 +289,7 @@ int main(int argc, char *argv[])
     if (initiate_cache(assets_dir) == 0)
         return EXIT_FAILURE;
 
-    if(init_threadpool() != 0)
+    if (init_threadpool() != 0)
         return EXIT_FAILURE;
 
     init_client_list();
@@ -307,8 +308,12 @@ int main(int argc, char *argv[])
 
 /**
  * To do list,
-
- * Create a web portfolio 
+ * 
+ * Yo concurrent threads are reading from same file descriptor you crazy?
+ * accept_connections, break or continue?
+ * connection keep-alive
+ * thread to perform cleanup if a connection is up too long.
+ * Create a web portfolio
  * Support sending compressed files
  * Support sending of non html files
  * Add rate limiting, close client sockets after timeout

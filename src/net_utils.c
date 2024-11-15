@@ -30,7 +30,7 @@
 #define SOCKADDR_4_SIZE sizeof(struct sockaddr_in)
 #define SOCKADDR_6_SIZE sizeof(struct sockaddr_in6)
 
-extern SSL_CTX * g_ssl_ctx;
+extern SSL_CTX *g_ssl_ctx;
 
 /**
  * Function to get an IPv4 address of the machine which
@@ -50,7 +50,7 @@ const char *get_internet_facing_ipv4()
     dns_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (dns_fd < 0)
     {
-        LOG_ERROR("%s socket", __func__);   
+        LOG_ERROR("%s socket", __func__);
         return NULL;
     }
     serv.sin_family = AF_INET;
@@ -90,7 +90,7 @@ const char *get_internet_facing_ipv4()
 const char *get_ip_address(struct sockaddr *addr)
 {
     void *ip_addr = NULL;
-    short unsigned port = 0; 
+    short unsigned port = 0;
     struct sockaddr_in6 *ipv6 = NULL;
     struct sockaddr_in *ipv4 = NULL;
     static char ipstr[INET6_ADDRSTRLEN + 8] = {0};
@@ -225,14 +225,14 @@ int accept_connections(const int server_fd, const int epoll_fd)
         }
         LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
 
-        ret = setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-        if ( ret != 0)
+        ret = setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
+        if (ret != 0)
         {
             LOG_ERROR("%s setsockopt SO_RCVTIMEO failed", __func__);
             break;
         }
 
-        ret = setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+        ret = setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout));
         if (ret != 0)
         {
             LOG_ERROR("%s setsockopt SO_SNDTIMEO failed", __func__);
@@ -261,7 +261,7 @@ int accept_connections(const int server_fd, const int epoll_fd)
 
         // Add new connection to epoll event listener
         ev.events = EPOLLIN | EPOLLET;
-        ev.data.ptr = client_ssl;
+        ev.data.fd = client_fd;
         ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
         if (ret != 0)
         {
@@ -269,11 +269,12 @@ int accept_connections(const int server_fd, const int epoll_fd)
             break;
         }
         // Below function needs to limit connections in future
-        ret = add_client_ssl_to_list(client_ssl);
-        if(ret == -1)
+        ret = add_client_info(client_fd, client_ssl);
+        if (ret == -1)
         {
             close(client_fd);
             SSL_free(client_ssl);
+            continue;
         }
         LOG_INFO("Connection accepted and bound to client_fd: %d", client_fd);
     }
@@ -307,7 +308,7 @@ char *get_internet_facing_ipv6()
     dns_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (dns_fd < 0)
     {
-        LOG_ERROR("%s socket", __func__);   
+        LOG_ERROR("%s socket", __func__);
         return NULL;
     }
     serv.sin6_family = AF_INET6;

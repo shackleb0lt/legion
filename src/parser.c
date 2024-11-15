@@ -167,18 +167,19 @@ int process_get_request(SSL *client_ssl, char *buf, bool is_head)
     return send_response(client_ssl, page_reqd, is_head);
 }
 
-// Read the incoming HTTP Request
-// Check the method type of the request
-// And handle it accordingly
+/**
+ * Read the incoming HTTP Request
+ * Check the method type of the request
+ * And handle it accordingly
+ */
 void handle_http_request(void *arg)
 {
-    int ret = 0;
     ssize_t bytes_read = 0;
     char buffer[BUFFER_SIZE];
-    SSL *client_ssl = (SSL *)arg;
+    client_info * cinfo = (client_info *) arg;
 
     // Below part needs better handling
-    bytes_read = SSL_read(client_ssl, buffer, BUFFER_SIZE - 1);
+    bytes_read = SSL_read(cinfo->ssl, buffer, BUFFER_SIZE - 1);
     if (bytes_read <= 0)
     {
         // return -1;
@@ -188,17 +189,13 @@ void handle_http_request(void *arg)
     // LOG_INFO("%s", buffer);
 
     if (strncmp(buffer, "GET", 3) == 0)
-        ret = process_get_request(client_ssl, buffer + 4, false);
+        process_get_request(cinfo->ssl, buffer + 4, false);
 
     else if (strncmp(buffer, "HEAD", 4) == 0)
-        ret = process_get_request(client_ssl, buffer + 5, true);
+        process_get_request(cinfo->ssl, buffer + 5, true);
 
     else
-        ret = send_internal_server_err(client_ssl);
+        send_internal_server_err(cinfo->ssl);
 
-
-    remove_client_ssl_from_list(client_ssl);
-    SSL_shutdown(client_ssl);
-    close(SSL_get_fd(client_ssl));
-    SSL_free(client_ssl);
+    remove_client_info(cinfo);
 }
