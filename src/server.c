@@ -305,16 +305,3 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 }
-
-/**
- * To do list,
- * 
- * Yo concurrent threads are reading from same file descriptor you crazy?
- * accept_connections, break or continue?
- * connection keep-alive
- * thread to perform cleanup if a connection is up too long.
- * Create a web portfolio
- * Support sending compressed files
- * Support sending of non html files
- * Add rate limiting, close client sockets after timeout
- */

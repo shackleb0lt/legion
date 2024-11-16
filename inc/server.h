@@ -40,9 +40,15 @@
 #define MAX_ALIVE_CONN 256
 #define BUFFER_SIZE 4096
 
+#define MAX_FD_COUNT    4096
+#define TLS_TIMEOUT_SEC 4
+
+#define DEFAULT_PAGE_SIZE 4096
+
 #define DEFAULT_ASSET_PATH "assets/"
 #define DEFAULT_ASSET_LEN  sizeof(DEFAULT_ASSET_PATH)
 
+#define DEFAULT_MIME_T  "application/octet-stream"
 #define INDEX_PAGE      "index.html"
 #define ERROR_404_PAGE  "error_404.html"
 #define ERROR_500_PAGE  "error_500.html"
@@ -52,9 +58,6 @@
 
 #define SERVER_IP_ADDR "127.0.0.1"
 #define SERVER_PORT    "8080"
-
-#define MAX_FD_COUNT    4096
-#define TLS_TIMEOUT_SEC 4
 
 typedef struct
 {
@@ -72,11 +75,13 @@ typedef struct
 typedef struct
 {
     int fd;
-    char *file_name;
-    size_t file_size;
+    char *file_map;
+    const char *file_name;
+    const char *mime_type;
+    off_t file_size;
 } page_cache;
 
-page_cache *get_page_cache(const char *path);
+const page_cache *get_page_cache(const char *path);
 size_t initiate_cache(const char *root_path);
 void release_cache();
 

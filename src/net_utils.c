@@ -183,7 +183,7 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
-    LOG_INFO("Server is active on %s", get_ip_address(res->ai_addr));
+    LOG_INFO("Server is active on %s , sockfd %d", get_ip_address(res->ai_addr), server_fd);
     freeaddrinfo(res);
     return server_fd;
 
