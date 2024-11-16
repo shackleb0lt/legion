@@ -28,6 +28,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <zlib.h>
+#include <brotli/encode.h>
 
 static size_t g_cache_size;
 static page_cache *g_cache;
