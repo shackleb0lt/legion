@@ -193,61 +193,91 @@ err_cleanup:
     return -1;
 }
 
+static int accept_client(int server_fd, int *client_fd_ptr)
+{
+    int client_fd = 0, ret = 0;
+    SSL *client_ssl = NULL;
+    struct sockaddr client_addr = {0};
+    socklen_t client_addr_size = sizeof(struct sockaddr);
+    
+    (*client_fd_ptr) = -1; 
+    client_fd = accept(server_fd, &client_addr, &client_addr_size);
+    if (client_fd < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return 0;
+
+        }
+        LOG_ERROR("%s accept", __func__);
+        return -1;
+    }
+
+    LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
+    ret = set_socket_timeout(client_fd, TLS_TIMEOUT_SEC, 0);
+    if(ret != 0)
+    {
+        close(client_fd);
+        return -1;
+    }
+
+    client_ssl = SSL_new(g_ssl_ctx);
+    if (client_ssl == NULL)
+    {
+        ERR_print_errors_cb(ssl_log_err, NULL);
+        close(client_fd);
+        return -1;
+    }
+
+    SSL_set_fd(client_ssl, client_fd);
+    ret = SSL_accept(client_ssl);
+    if (ret != 1)
+    {
+        ERR_print_errors_cb(ssl_log_err, NULL);
+        SSL_free(client_ssl);
+        close(client_fd);
+        return -1;
+    }
+
+    ret = set_non_blocking(client_fd, true);
+    if (ret != 0)
+    {
+        SSL_shutdown(client_ssl);
+        SSL_free(client_ssl);
+        close(client_fd);
+        return -1;
+    }
+
+    ret = add_client_info(client_fd, client_ssl);
+    if (ret == -1)
+    {
+        SSL_shutdown(client_ssl);
+        SSL_free(client_ssl);
+        close(client_fd);
+    }
+    (*client_fd_ptr) = client_fd;
+    return 1;
+}
+
 /**
  * Function that accepts all new incoming connections
  * on the server socket and adds them to epoll event listener
  */
 int accept_connections(const int server_fd, const int epoll_fd)
 {
-    bool is_err = false;
-    SSL *client_ssl = NULL;
     int ret = 0, client_fd = 0;
-    struct sockaddr client_addr = {0};
     struct epoll_event ev = {0};
-    struct timeval timeout = {0};
-    socklen_t client_addr_size = sizeof(struct sockaddr);
-
-    timeout.tv_sec = TLS_TIMEOUT_SEC;
 
     // Loop until all incoming connections have been accepted
     while (1)
     {
-        client_ssl = NULL;
-        client_fd = accept(server_fd, &client_addr, &client_addr_size);
-        if (client_fd == -1)
-        {
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
-            {
-                LOG_ERROR("%s accept", __func__);
-                is_err = true;
-            }
-            break;
-        }
-        LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
+        ret = accept_client(server_fd, &client_fd);
 
-        ret = set_socket_timeout(client_fd, TLS_TIMEOUT_SEC, 0);
-        if(ret != 0)
+        if(ret == 0)
             break;
 
-        // Set non blocking to avoid waiting for incoming requests
-        client_ssl = SSL_new(g_ssl_ctx);
-        if (client_ssl == NULL)
-        {
-            ERR_print_errors_cb(ssl_log_err, NULL);
-            break;
-        }
-        SSL_set_fd(client_ssl, client_fd);
-
-        ret = SSL_accept(client_ssl);
-        if (ret != 1)
-        {
-            ERR_print_errors_cb(ssl_log_err, NULL);
-            break;
-        }
-
-        ret = set_non_blocking(client_fd, true);
-        if (ret != 0)
-            break;
+        else if(ret == -1)
+            continue;
 
         // Add new connection to epoll event listener
         ev.events = EPOLLIN | EPOLLET;
@@ -256,33 +286,11 @@ int accept_connections(const int server_fd, const int epoll_fd)
         if (ret != 0)
         {
             LOG_ERROR("%s epoll_ctl", __func__);
-            break;
-        }
-        // Below function needs to limit connections in future
-        ret = add_client_info(client_fd, client_ssl);
-        if (ret == -1)
-        {
-            close(client_fd);
-            SSL_free(client_ssl);
+            remove_client_info_fd(client_fd);
             continue;
         }
         LOG_INFO("Connection accepted and bound to client_fd: %d", client_fd);
     }
-
-    if (client_fd != -1)
-    {
-        close(client_fd);
-        is_err = true;
-    }
-
-    if (client_ssl != NULL)
-    {
-        SSL_free(client_ssl);
-        is_err = true;
-    }
-
-    if (is_err)
-        return -1;
 
     return 0;
 }

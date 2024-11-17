@@ -118,13 +118,17 @@ int set_non_blocking(const int fd, bool is_non_block)
     return 0;
 }
 
+/**
+ * Sets the timeout for a blocking socket
+ */
 int set_socket_timeout(const int fd, const time_t sec, const time_t usec)
 {
+    int ret = 0;
     struct timeval timeout = {0};
     timeout.tv_sec = sec;
     timeout.tv_usec = usec;
 
-    int ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const void *)&timeout, sizeof(timeout));
+    ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const void *)&timeout, sizeof(timeout));
     if (ret != 0)
     {
         LOG_ERROR("%s setsockopt SO_RCVTIMEO failed", __func__);

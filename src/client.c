@@ -82,7 +82,7 @@ int add_client_info(const int client_fd, SSL *client_ssl)
 }
 
 /**
- * Removes client info from array
+ * Removes client info from array using cinfo data directly
  */
 void remove_client_info(client_info *cinfo)
 {
@@ -92,13 +92,39 @@ void remove_client_info(client_info *cinfo)
         return;
     }
 
-    SSL_shutdown(cinfo->ssl);
-    close(cinfo->fd);
-    SSL_free(cinfo->ssl);
+    if(cinfo->ssl != NULL)
+    {
+        SSL_shutdown(cinfo->ssl);
+        SSL_free(cinfo->ssl);
+        cinfo->ssl = NULL;
+    }
 
-    cinfo->fd = -1;
-    cinfo->ssl = NULL;
+    if(cinfo->fd >= 0)
+    {
+        close(cinfo->fd);
+        cinfo->fd = -1;
+    }
     cinfo->keep_alive = false;
+}
+
+/**
+ * Removes client info from array using file descriptor
+ */
+void remove_client_info_fd(const int fd)
+{
+    if(fd < 0)
+        return;
+
+    if(clist[fd].ssl != NULL)
+    {
+        SSL_shutdown(clist[fd].ssl);
+        SSL_free(clist[fd].ssl);
+        clist[fd].ssl = NULL;
+    }
+
+    close(clist[fd].fd);
+    clist[fd].fd = -1;
+    clist[fd].keep_alive = false;
 }
 
 /**

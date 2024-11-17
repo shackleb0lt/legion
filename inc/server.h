@@ -88,6 +88,7 @@ void release_cache();
 int set_fd_limit();
 void init_client_list();
 void cleanup_client_list();
+void remove_client_info_fd(const int fd);
 void remove_client_info(client_info * cinfo);
 int add_client_info(const int client_fd, SSL *client_ssl);
 client_info *get_client_info(const int client_fd);

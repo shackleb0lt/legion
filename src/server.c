@@ -33,6 +33,8 @@ bool server_run = true;
 // Store the global ssl context
 SSL_CTX *g_ssl_ctx = NULL;
 
+const int g_epoll_fd = -1;
+
 /**
  * Signal handler to catch signals and
  * shutdown the server gracefully
@@ -203,7 +205,7 @@ void run_https_server(int server_fd)
             // New event on server_fd means incoming connection
             if (events[curr].data.fd == server_fd)
             {
-                // Accept new connection and add it to epoll
+                // Accept new connections then add them to epoll
                 if (accept_connections(server_fd, epoll_fd) == -1)
                 {
                     server_run = false;
