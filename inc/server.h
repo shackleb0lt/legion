@@ -93,7 +93,8 @@ int add_client_info(const int client_fd, SSL *client_ssl);
 client_info *get_client_info(const int client_fd);
 
 int ssl_log_err(const char *errstr, size_t len, void *u);
-int set_nonblocking(const int fd);
+int set_non_blocking(const int fd, bool is_non_block);
+int set_socket_timeout(const int fd, const time_t sec, const time_t usec);
 
 void handle_http_request(void *arg);
 

@@ -152,7 +152,7 @@ int initiate_server(const char *server_ip, const char *port)
     }
 
     // Set to non blocking to avoid waiting for incoming connection
-    ret = set_nonblocking(server_fd);
+    ret = set_non_blocking(server_fd, true);
     if (ret != 0)
         goto err_cleanup;
 
@@ -225,19 +225,9 @@ int accept_connections(const int server_fd, const int epoll_fd)
         }
         LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
 
-        ret = setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
-        if (ret != 0)
-        {
-            LOG_ERROR("%s setsockopt SO_RCVTIMEO failed", __func__);
+        ret = set_socket_timeout(client_fd, TLS_TIMEOUT_SEC, 0);
+        if(ret != 0)
             break;
-        }
-
-        ret = setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout));
-        if (ret != 0)
-        {
-            LOG_ERROR("%s setsockopt SO_SNDTIMEO failed", __func__);
-            break;
-        }
 
         // Set non blocking to avoid waiting for incoming requests
         client_ssl = SSL_new(g_ssl_ctx);
@@ -255,7 +245,7 @@ int accept_connections(const int server_fd, const int epoll_fd)
             break;
         }
 
-        ret = set_nonblocking(client_fd);
+        ret = set_non_blocking(client_fd, true);
         if (ret != 0)
             break;
 

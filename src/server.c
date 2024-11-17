@@ -26,6 +26,7 @@
 #include "threadpool.h"
 #include <signal.h>
 
+#define EPOLL_TIMEOUT_MS 1000
 // Flag to maintain running status of the server
 bool server_run = true;
 
@@ -180,7 +181,7 @@ void run_https_server(int server_fd)
     while (server_run)
     {
         // Wait for incoming activity on all the ports being tracked
-        nfds = epoll_wait(epoll_fd, events, MAX_ALIVE_CONN, -1);
+        nfds = epoll_wait(epoll_fd, events, MAX_ALIVE_CONN, EPOLL_TIMEOUT_MS);
         if (nfds == -1)
         {
             // If wait didn't exit due to interrupt signal
@@ -192,6 +193,9 @@ void run_https_server(int server_fd)
             server_run = false;
             break;
         }
+
+        else if(nfds == 0)
+            continue;
 
         // Iterate through the list of sockets which triggered an event
         for (curr = 0; curr < nfds; curr++)
@@ -210,12 +214,13 @@ void run_https_server(int server_fd)
 
             curr_event = events[curr].events;
             cinfo = get_client_info(events[curr].data.fd);
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, cinfo->fd, NULL);
-/////////////////////////////////////////////////////////////////////
             if(cinfo == NULL)
+            {
                 close(cinfo->fd);
-/////////////////////////////////////////////////////////////////////
+                continue;
+            }
 
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, cinfo->fd, NULL);
             if (curr_event && POLL_IN)
             {
                 add_task_to_queue(handle_http_request, cinfo);

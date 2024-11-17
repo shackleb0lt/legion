@@ -94,7 +94,7 @@ int set_fd_limit()
  * Convert a normal socket to a non-blocking socket
  * Returns 0 on success, -1 otherwise
  */
-int set_nonblocking(const int fd)
+int set_non_blocking(const int fd, bool is_non_block)
 {
     int ret = 0;
     ret = fcntl(fd, F_GETFL, 0);
@@ -104,10 +104,37 @@ int set_nonblocking(const int fd)
         return -1;
     }
 
-    ret = fcntl(fd, F_SETFL, ret | O_NONBLOCK);
+    if(is_non_block)
+        ret |= O_NONBLOCK;
+    else
+        ret &= ~O_NONBLOCK;
+
+    ret = fcntl(fd, F_SETFL, ret);
     if (ret == -1)
     {
         LOG_ERROR("%s fcntl set", __func__);
+        return -1;
+    }
+    return 0;
+}
+
+int set_socket_timeout(const int fd, const time_t sec, const time_t usec)
+{
+    struct timeval timeout = {0};
+    timeout.tv_sec = sec;
+    timeout.tv_usec = usec;
+
+    int ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const void *)&timeout, sizeof(timeout));
+    if (ret != 0)
+    {
+        LOG_ERROR("%s setsockopt SO_RCVTIMEO failed", __func__);
+        return -1;
+    }
+
+    ret = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const void *)&timeout, sizeof(timeout));
+    if (ret != 0)
+    {
+        LOG_ERROR("%s setsockopt SO_SNDTIMEO failed", __func__);
         return -1;
     }
     return 0;

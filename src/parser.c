@@ -25,6 +25,8 @@
 #include "server.h"
 #include <sys/sendfile.h>
 
+#define RTT_TIMEOUT_US 500000
+
 extern const page_cache *page_404;
 extern const page_cache *page_500;
 
@@ -177,6 +179,23 @@ int process_get_request(SSL *client_ssl, char *buf, bool is_head)
     }
     return send_response(client_ssl, page_reqd, is_head);
 }
+
+// int parse_header(const char * buffer, bool *keep_alive)
+// {
+//     char *hdrend = NULL;
+//     *keep_alive = false;
+//     hdrend = strstr(buffer, "\r\n\r\n");
+//     if(hdrend == NULL)
+//     {
+//         LOG_ERROR("Unable to find end of header");
+//         return -1;
+//     }
+
+//     hdrend = strstr(buffer, "keep-alive");
+//     if(hdrend == NULL)
+//         *keep_alive = true;
+//     return 0;
+// }
 
 /**
  * Read the incoming HTTP Request
