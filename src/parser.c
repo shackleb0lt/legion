@@ -187,7 +187,9 @@ int parse_header(const char *buffer, client_info *cinfo)
     cinfo->keep_alive = false;
     needle = strstr(buffer, "keep-alive");
     if (needle != NULL)
+    {
         cinfo->keep_alive = true;
+    }
 
     return 0;
 }
@@ -195,7 +197,6 @@ int parse_header(const char *buffer, client_info *cinfo)
 void handle_http_request(void *arg)
 {
     client_info *cinfo = (client_info *)arg;
-    struct epoll_event ev = {0};
     int bytes_read = 0, ret = 0;
     char buffer[BUFFER_SIZE];
 
@@ -224,56 +225,8 @@ void handle_http_request(void *arg)
             break;
 
         bytes_read = SSL_read(cinfo->ssl, buffer, BUFFER_SIZE - 1);
-        if (bytes_read > 0)
-            continue;
-
-        else if (bytes_read == 0)
-            break;
-
-        ret = SSL_get_error(cinfo->ssl, bytes_read);
-        if (ret == SSL_ERROR_WANT_READ)
-        {
-            set_non_blocking(cinfo->fd, true);
-            ev.events = EPOLLIN;
-            ev.data.fd = cinfo->fd;
-            ret = epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, cinfo->fd, &ev);
-            if (ret == -1)
-            {
-                remove_client_info(cinfo);
-                return;
-            }
-        }
-        else
+        if (bytes_read <= 0)
             break;
     }
     remove_client_info(cinfo);
 }
-
-/**
-void handle_http_request(void *arg)
-{
-    client_info * cinfo = (client_info *) arg;
-    ssize_t bytes_read = 0;
-    char buffer[BUFFER_SIZE];
-
-    // Below part needs better handling
-    bytes_read = SSL_read(cinfo->ssl, buffer, BUFFER_SIZE - 1);
-    if (bytes_read <= 0)
-    {
-        return;
-    }
-    buffer[bytes_read] = '\0';
-
-    set_non_blocking(cinfo->fd, false);
-    if (strncmp(buffer, "GET", 3) == 0)
-        process_get_request(cinfo->ssl, buffer + 4, false);
-
-    else if (strncmp(buffer, "HEAD", 4) == 0)
-        process_get_request(cinfo->ssl, buffer + 5, true);
-
-    else
-        send_server_error(cinfo->ssl);
-
-    remove_client_info(cinfo);
-}
- */

@@ -95,6 +95,11 @@ $(BUILD_DIR):
 	@echo "Creating build directory $(BUILD_DIR)"
 	mkdir -p $(BUILD_DIR)
 
+.PHONY: test
+test: $(BUILD_DIR)
+	@echo "Building test executables"
+	gcc -o bld/runtest test/sanity_test.c -g -lssl -lcrypto
+
 # Clean up build files
 .PHONY: clean
 clean:

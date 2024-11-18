@@ -36,6 +36,21 @@ SSL_CTX *g_ssl_ctx = NULL;
 const int g_epoll_fd = -1;
 
 /**
+ * Select http 1.1 as the communication protocol
+ */
+int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg)
+{
+    static const unsigned char http1_1[] = "\x08http/1.1";
+    (void) ssl;
+    (void) arg;
+    if (SSL_select_next_proto((unsigned char **)out, outlen, http1_1, sizeof(http1_1) - 1, in, inlen) == OPENSSL_NPN_NEGOTIATED)
+    {
+        return SSL_TLSEXT_ERR_OK;
+    }
+    return SSL_TLSEXT_ERR_NOACK;
+}
+
+/**
  * Signal handler to catch signals and
  * shutdown the server gracefully
  */
@@ -128,6 +143,7 @@ int init_openssl_context(const char *cert_file, const char *key_file)
         return -1;
     }
 
+    SSL_CTX_set_alpn_select_cb(g_ssl_ctx, alpn_select_cb, NULL);
     // Load certificate and private key for authentication
     LOG_INFO("SSL using cert file %s", cert_file);
     if (SSL_CTX_use_certificate_file(g_ssl_ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
@@ -215,17 +231,20 @@ void run_https_server(int server_fd)
             }
 
             curr_event = events[curr].events;
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[curr].data.fd, NULL);
+
             cinfo = get_client_info(events[curr].data.fd);
             if(cinfo == NULL)
             {
-                close(cinfo->fd);
-                continue;
+                close(events[curr].data.fd);
             }
-
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, cinfo->fd, NULL);
-            if (curr_event && POLL_IN)
+            else if (curr_event && POLL_IN)
             {
                 add_task_to_queue(handle_http_request, cinfo);
+            }
+            else if (curr_event & (EPOLLHUP | EPOLLERR))
+            {
+                remove_client_info(cinfo);
             }
         }
     }
