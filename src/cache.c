@@ -36,6 +36,142 @@ static page_cache *g_cache;
 const page_cache *page_404 = NULL;
 const page_cache *page_500 = NULL;
 
+#define CHUNK_SIZE 16384
+
+/**
+int compress_file_zlib(const char *input_path)
+{
+    FILE *input = fopen(input_path, "rb");
+    if (!input)
+    {
+        perror("Failed to open input file");
+        return -1;
+    }
+
+    FILE *output = fopen(output_path, "wb");
+    if (!output)
+    {
+        perror("Failed to open output file");
+        fclose(input);
+        return -1;
+    }
+
+    int result = 0;
+    z_stream strm = {0};
+    if (deflateInit(&strm, Z_BEST_COMPRESSION) != Z_OK)
+    {
+        fprintf(stderr, "Failed to initialize zlib\n");
+        result = -1;
+        goto cleanup;
+    }
+
+    unsigned char in[CHUNK_SIZE];
+    unsigned char out[CHUNK_SIZE];
+
+    int flush;
+    do
+    {
+        strm.avail_in = fread(in, 1, CHUNK_SIZE, input);
+        if (ferror(input))
+        {
+            fprintf(stderr, "Error reading input file\n");
+            result = -1;
+            break;
+        }
+        flush = feof(input) ? Z_FINISH : Z_NO_FLUSH;
+        strm.next_in = in;
+
+        do
+        {
+            strm.avail_out = CHUNK_SIZE;
+            strm.next_out = out;
+            deflate(&strm, flush);
+            fwrite(out, 1, CHUNK_SIZE - strm.avail_out, output);
+        } while (strm.avail_out == 0);
+
+    } while (flush != Z_FINISH);
+
+    deflateEnd(&strm);
+}
+
+int compress_file_brotli(const char *input_path, const char *output_path)
+{
+    FILE *input = fopen(input_path, "rb");
+    if (!input)
+    {
+        perror("Failed to open input file");
+        return -1;
+    }
+
+    FILE *output = fopen(output_path, "wb");
+    if (!output)
+    {
+        perror("Failed to open output file");
+        fclose(input);
+        return -1;
+    }
+
+    int result = 0;
+
+        // Brotli compression
+    BrotliEncoderState *state = BrotliEncoderCreateInstance(NULL, NULL, NULL);
+    if (!state)
+    {
+        fprintf(stderr, "Failed to initialize Brotli encoder\n");
+        result = -1;
+        goto cleanup;
+    }
+    BrotliEncoderSetParameter(state, BROTLI_PARAM_QUALITY, 11);
+    BrotliEncoderSetParameter(state, BROTLI_PARAM_LGWIN, 22);
+
+    unsigned char in[CHUNK_SIZE];
+    unsigned char out[CHUNK_SIZE];
+    size_t available_in, available_out, total_out;
+    const unsigned char *next_in;
+    unsigned char *next_out;
+
+    int is_eof = 0;
+    while (!is_eof)
+    {
+        available_in = fread(in, 1, CHUNK_SIZE, input);
+        if (ferror(input))
+        {
+            fprintf(stderr, "Error reading input file\n");
+            result = -1;
+            break;
+        }
+        is_eof = feof(input);
+        next_in = in;
+
+        BrotliEncoderOperation op = is_eof ? BROTLI_OPERATION_FINISH : BROTLI_OPERATION_PROCESS;
+        do
+        {
+            available_out = CHUNK_SIZE;
+            next_out = out;
+
+            if (!BrotliEncoderCompressStream(state, op, &available_in, &next_in, &available_out, &next_out, &total_out))
+            {
+                fprintf(stderr, "Brotli compression failed\n");
+                result = -1;
+                break;
+            }
+
+            fwrite(out, 1, CHUNK_SIZE - available_out, output);
+        } while (available_out == 0);
+
+        if (result == -1)
+            break;
+    }
+
+    BrotliEncoderDestroyInstance(state);
+    
+
+cleanup:
+    fclose(input);
+    fclose(output);
+    return result;
+}
+ */
 /**
  * Function to perform cache cleanup
  * Releases all dynamically allocated memory and
