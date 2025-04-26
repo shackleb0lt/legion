@@ -31,21 +31,21 @@ thpool_queue g_th_queue;
  * If the queue is full - 1 is returned
  * Check threadpool.h for queue size limits
  */
-int add_task_to_queue(func_ptr_t f_ptr, void * arg)
+int add_task_to_queue(func_ptr_t f_ptr, void *arg)
 {
     size_t next = 0;
 
-    if(f_ptr == NULL)
+    if (f_ptr == NULL)
         return -1;
 
     pthread_mutex_lock(&g_th_queue.qlock);
-    if(g_th_queue.queue_len == TASK_QUEUE_SIZE)
+    if (g_th_queue.queue_len == TASK_QUEUE_SIZE)
     {
         // Queue is full
         pthread_mutex_unlock(&(g_th_queue.qlock));
         return -1;
     }
-    else if(g_th_queue.queue_len == 0)
+    else if (g_th_queue.queue_len == 0)
     {
         g_th_queue.first = 0;
         next = 0;
@@ -75,9 +75,9 @@ static void get_task_from_queue(th_task *task)
     th_task *temp = NULL;
     task->func = NULL;
     task->arg = NULL;
-    if(g_th_queue.queue_len == 0)
+    if (g_th_queue.queue_len == 0)
         return;
-   
+
     temp = &g_th_queue.queue[g_th_queue.first];
 
     task->func = temp->func;
@@ -95,17 +95,16 @@ static void get_task_from_queue(th_task *task)
  * stop_threadpool is called, automatically fetches tasks
  * from queue and executes them.
  */
-static void * thread_worker(void *arg)
+static void *thread_worker(void *arg)
 {
     th_task task;
     (void)arg;
-    while(g_th_queue.is_run)
+    while (g_th_queue.is_run)
     {
         pthread_mutex_lock(&g_th_queue.qlock);
 
         while (g_th_queue.queue_len == 0 && g_th_queue.is_run == true)
             pthread_cond_wait(&(g_th_queue.task_avail), &(g_th_queue.qlock));
-
 
         if (g_th_queue.is_run == false)
             break;
@@ -113,9 +112,8 @@ static void * thread_worker(void *arg)
         get_task_from_queue(&task);
         pthread_mutex_unlock(&g_th_queue.qlock);
 
-        if(task.func != NULL)
+        if (task.func != NULL)
             task.func(task.arg);
-
     }
     pthread_mutex_unlock(&g_th_queue.qlock);
     return NULL;
@@ -132,36 +130,36 @@ int init_threadpool()
     pthread_attr_t thread_attr;
 
     g_th_queue.first = 0;
-    g_th_queue.last  = 0;
+    g_th_queue.last = 0;
     g_th_queue.is_run = true;
     g_th_queue.queue_len = 0;
 
     res = pthread_mutex_init(&(g_th_queue.qlock), NULL);
-    if(res != 0)
+    if (res != 0)
         return -1;
 
     res = pthread_cond_init(&(g_th_queue.task_avail), NULL);
-    if(res != 0)
+    if (res != 0)
         return -1;
 
     res = pthread_attr_init(&thread_attr);
-    if(res != 0)
+    if (res != 0)
         return -1;
 
-    res = pthread_attr_setstacksize(&thread_attr, (PTHREAD_STACK_MIN << 2));
-    if ( res != 0)
+    res = pthread_attr_setstacksize(&thread_attr, PTHREAD_STACK_SIZE);
+    if (res != 0)
         return -1;
 
-    for(i = 0; i < TASK_QUEUE_SIZE; i++)
+    for (i = 0; i < TASK_QUEUE_SIZE; i++)
     {
         g_th_queue.queue[i].func = NULL;
         g_th_queue.queue[i].arg = NULL;
     }
 
-    for(i = 0; i < THREAD_COUNT; i++)
+    for (i = 0; i < THREAD_COUNT; i++)
     {
         res = pthread_create(&(g_th_queue.thread_arr[i]), &thread_attr, thread_worker, NULL);
-        if(res != 0)
+        if (res != 0)
         {
             stop_threadpool();
             return -1;
@@ -182,7 +180,7 @@ void stop_threadpool()
     pthread_mutex_lock(&(g_th_queue.qlock));
     g_th_queue.is_run = false;
     g_th_queue.queue_len = 0;
-    for(i = 0; i < TASK_QUEUE_SIZE; i++)
+    for (i = 0; i < TASK_QUEUE_SIZE; i++)
     {
         g_th_queue.queue[i].func = NULL;
         g_th_queue.queue[i].arg = NULL;

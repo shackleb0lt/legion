@@ -4,7 +4,7 @@
 # Compiler and flags
 CC := gcc
 CFLAGS := -Wall -Wextra -Iinc
-LDLIBS := -lpthread -lrt -lz -lbrotlienc -lssl -lcrypto
+LDLIBS := -lpthread -lrt -lssl -lcrypto #-lz -lbrotlienc
 
 SRC_DIR := src
 INC_DIR := inc

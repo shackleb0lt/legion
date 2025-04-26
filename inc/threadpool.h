@@ -31,13 +31,14 @@
 
 #define THREAD_COUNT 16
 #define TASK_QUEUE_SIZE 64
+#define PTHREAD_STACK_SIZE (128 * 1024)
 
 typedef void (*func_ptr_t)(void *arg);
 
 typedef struct
 {
     func_ptr_t func;
-    void * arg;
+    void *arg;
 } th_task;
 
 typedef struct
@@ -57,6 +58,6 @@ typedef struct
 
 int init_threadpool();
 void stop_threadpool();
-int add_task_to_queue(func_ptr_t f_ptr, void * arg);
+int add_task_to_queue(func_ptr_t f_ptr, void *arg);
 
 #endif
