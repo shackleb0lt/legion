@@ -85,6 +85,7 @@ void stop_logging()
 void logline(const char * prefix, const char *fmt, ...)
 {
     va_list args;
+    int errno_save = errno;
     size_t buf_len = 0;
     time_t time_epoch = 0;
     struct tm time_local;
@@ -101,8 +102,7 @@ void logline(const char * prefix, const char *fmt, ...)
 
     if(prefix[1] == 'E' && errno != 0)
     {
-        buf_len += (size_t) snprintf(buffer + buf_len, LOG_SIZE - buf_len - 1, "%s ", strerror(errno));
-        errno = 0;
+        buf_len += (size_t) snprintf(buffer + buf_len, LOG_SIZE - buf_len - 1, "%s ", strerror(errno_save));
     }
 
     va_start(args, fmt);
@@ -114,4 +114,5 @@ void logline(const char * prefix, const char *fmt, ...)
     line_count++;
     if(line_count == LOG_FILE_LIMIT)
         rotate_logs();
+    errno = 0;
 }

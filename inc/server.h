@@ -33,12 +33,10 @@
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 
 #define MAX_QUEUE_CONN 64
 #define MAX_ALIVE_CONN 256
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE    8192
 
 #define MAX_FD_COUNT    4096
 #define TLS_TIMEOUT_SEC 4
@@ -53,29 +51,23 @@
 #define ERROR_404_PAGE  "error_404.html"
 #define ERROR_500_PAGE  "error_500.html"
 
-#define DEFAULT_SSL_CERT_FILE "/home/qubit/cf_cert.pem" 
-#define DEFAULT_SSL_KEY_FILE  "/home/qubit/cf_key.pem"
 
 #define SERVER_IP_ADDR "127.0.0.1"
-#define SERVER_PORT    "8080"
+#define SERVER_PORT_NO 8080
+
+typedef struct sockaddr s_addr;
 
 typedef struct
 {
     int fd;
-    SSL *ssl;
+    char *buffer;
+    size_t buf_len;
     bool keep_alive;
 } client_info;
 
 typedef struct
 {
-    SSL* ssl[MAX_ALIVE_CONN];
-    ssize_t last_free;
-} client_list;
-
-typedef struct
-{
     int fd;
-    char *file_map;
     const char *file_name;
     const char *mime_type;
     off_t file_size;
@@ -90,16 +82,15 @@ void init_client_list();
 void cleanup_client_list();
 void remove_client_info_fd(const int fd);
 void remove_client_info(client_info * cinfo);
-int add_client_info(const int client_fd, SSL *client_ssl);
+int add_client_info(const int client_fd);
 client_info *get_client_info(const int client_fd);
 
-int ssl_log_err(const char *errstr, size_t len, void *u);
 int set_non_blocking(const int fd, bool is_non_block);
-int set_socket_timeout(const int fd, const time_t sec, const time_t usec);
 
 void handle_http_request(void *arg);
 
-int initiate_server(const char *server_ip, const char *port);
+socklen_t check_ip_and_port(const char *ip_str, const char *port_str, s_addr *server_addr);
+int initiate_server(s_addr *server_addr, socklen_t addr_len);
 int accept_connections(const int server_fd, const int epoll_fd);
 
 #ifdef IPV6_SERVER

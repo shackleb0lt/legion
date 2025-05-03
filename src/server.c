@@ -27,28 +27,10 @@
 #include <signal.h>
 
 #define EPOLL_TIMEOUT_MS 1000
+
 // Flag to maintain running status of the server
 bool server_run = true;
-
-// Store the global ssl context
-SSL_CTX *g_ssl_ctx = NULL;
-
-const int g_epoll_fd = -1;
-
-/**
- * Select http 1.1 as the communication protocol
- */
-int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg)
-{
-    static const unsigned char http1_1[] = "\x08http/1.1";
-    (void) ssl;
-    (void) arg;
-    if (SSL_select_next_proto((unsigned char **)out, outlen, http1_1, sizeof(http1_1) - 1, in, inlen) == OPENSSL_NPN_NEGOTIATED)
-    {
-        return SSL_TLSEXT_ERR_OK;
-    }
-    return SSL_TLSEXT_ERR_NOACK;
-}
+int g_epoll_fd = -1;
 
 /**
  * Signal handler to catch signals and
@@ -59,7 +41,7 @@ void signal_handler(int sig)
 #ifndef DEBUG
     (void)sig;
 #endif
-    LOG_INFO("Received %s signal. Initiating server shutdown...", strsignal(sig));
+    LOG_INFO("Received %s signal. Shutdown initiated.", strsignal(sig));
     server_run = false;
 }
 
@@ -105,62 +87,10 @@ int signal_setup()
  */
 void cleanup_server()
 {
-    release_cache();
-    stop_logging();
     stop_threadpool();
+    release_cache();
     cleanup_client_list();
-
-    if (g_ssl_ctx != NULL)
-        SSL_CTX_free(g_ssl_ctx);
-}
-
-/**
- * Initialize structs for secured socket communication
- * Setup the cert and key files for authentication
- */
-int init_openssl_context(const char *cert_file, const char *key_file)
-{
-    if (access(cert_file, F_OK | R_OK) != 0)
-    {
-        LOG_ERROR("ssl_cert_file: %s cannot be accessed\n", cert_file);
-        return -1;
-    }
-
-    if (access(key_file, F_OK | R_OK) != 0)
-    {
-        LOG_ERROR("ssl_key_file: %s cannot be accessed\n", key_file);
-        return -1;
-    }
-
-    SSL_library_init();
-    OpenSSL_add_all_algorithms();
-    SSL_load_error_strings();
-
-    g_ssl_ctx = SSL_CTX_new(TLS_server_method());
-    if (g_ssl_ctx == NULL)
-    {
-        ERR_print_errors_cb(ssl_log_err, NULL);
-        return -1;
-    }
-
-    SSL_CTX_set_alpn_select_cb(g_ssl_ctx, alpn_select_cb, NULL);
-    // Load certificate and private key for authentication
-    LOG_INFO("SSL using cert file %s", cert_file);
-    if (SSL_CTX_use_certificate_file(g_ssl_ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
-    {
-        ERR_print_errors_cb(ssl_log_err, NULL);
-        return -1;
-    }
-
-    LOG_INFO("SSL using private key file %s", key_file);
-    if (SSL_CTX_use_PrivateKey_file(g_ssl_ctx, key_file, SSL_FILETYPE_PEM) <= 0)
-    {
-        ERR_print_errors_cb(ssl_log_err, NULL);
-        return -1;
-    }
-
-    LOG_INFO("SSL Initialisation Complete");
-    return 0;
+    stop_logging();
 }
 
 /**
@@ -170,15 +100,14 @@ void run_https_server(int server_fd)
 {
     ssize_t nfds = 0;
     ssize_t curr = 0;
-    int epoll_fd = 0;
     client_info * cinfo = NULL;
     unsigned int curr_event = 0;
     struct epoll_event ev = {0};
     struct epoll_event events[MAX_ALIVE_CONN] = {{0}};
 
     // Setup epoll to track incoming connection on server port
-    epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1)
+    g_epoll_fd = epoll_create1(0);
+    if (g_epoll_fd == -1)
     {
         LOG_ERROR("%s epoll_create1", __func__);
         return;
@@ -186,20 +115,20 @@ void run_https_server(int server_fd)
 
     ev.events = EPOLLIN;
     ev.data.fd = server_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1)
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) == -1)
     {
         LOG_ERROR("%s epoll_ctl server_fd", __func__);
-        close(epoll_fd);
+        close(g_epoll_fd);
         return;
     }
 
-    LOG_INFO("epoll listening for edge triggers on %d", epoll_fd);
+    LOG_INFO("epoll listening for edge triggers on %d", g_epoll_fd);
 
     // Keep server alive until running status is true
     while (server_run)
     {
         // Wait for incoming activity on all the ports being tracked
-        nfds = epoll_wait(epoll_fd, events, MAX_ALIVE_CONN, EPOLL_TIMEOUT_MS);
+        nfds = epoll_wait(g_epoll_fd, events, MAX_ALIVE_CONN, EPOLL_TIMEOUT_MS);
         if (nfds == -1)
         {
             // If wait didn't exit due to interrupt signal
@@ -222,7 +151,7 @@ void run_https_server(int server_fd)
             if (events[curr].data.fd == server_fd)
             {
                 // Accept new connections then add them to epoll
-                if (accept_connections(server_fd, epoll_fd) == -1)
+                if (accept_connections(server_fd, g_epoll_fd) == -1)
                 {
                     server_run = false;
                     break;
@@ -231,12 +160,12 @@ void run_https_server(int server_fd)
             }
 
             curr_event = events[curr].events;
-            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[curr].data.fd, NULL);
+            // epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, events[curr].data.fd, NULL);
 
             cinfo = get_client_info(events[curr].data.fd);
-            if(cinfo == NULL)
+            if (cinfo == NULL)
             {
-                close(events[curr].data.fd);
+                continue;
             }
             else if (curr_event && POLL_IN)
             {
@@ -244,12 +173,13 @@ void run_https_server(int server_fd)
             }
             else if (curr_event & (EPOLLHUP | EPOLLERR))
             {
+                epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, events[curr].data.fd, NULL);
                 remove_client_info(cinfo);
             }
         }
     }
-    // Close epoll file descriptor and exit
-    close(epoll_fd);
+
+    close(g_epoll_fd);
 }
 
 int main(int argc, char *argv[])
@@ -257,39 +187,39 @@ int main(int argc, char *argv[])
     int opt = 0;
     int server_fd = 0;
     bool is_daemon_mode = false;
-    char *server_ip = SERVER_IP_ADDR;
-    char *server_port = SERVER_PORT;
+
+    char *server_ip = NULL;
+    char *server_port = NULL;
     char *assets_dir = DEFAULT_ASSET_PATH;
-    char *ssl_key_file = DEFAULT_SSL_KEY_FILE;
-    char *ssl_cert_file = DEFAULT_SSL_CERT_FILE;
+
+    socklen_t server_addr_len = 0;
+    struct sockaddr_storage server_addr = {0};
 
     while ((opt = getopt(argc, argv, "c:k:i:p:a:d:")) != -1)
     {
-        switch (opt)
+        switch (opt) 
         {
-        case 'c':
-            ssl_cert_file = optarg;
-            break;
-        case 'k':
-            ssl_key_file = optarg;
-            break;
-        case 'i':
-            server_ip = optarg;
-            break;
-        case 'p':
-            server_port = optarg;
-            break;
-        case 'a':
-            assets_dir = optarg;
-            break;
-        case 'd':
-            is_daemon_mode = true;
-            break;
-        default:
-            fprintf(stderr, "Usage: %s [-c cert.pem] [-k key.pem] [-i <ip addr>] [-p <port>] [-a <asset folder>]\n", argv[0]);
-            return EXIT_FAILURE;
-        }
+            case 'i':
+                server_ip = optarg;
+                break;
+            case 'p':
+                server_port = optarg;
+                break;
+            case 'a':
+                assets_dir = optarg;
+                break;
+            case 'd':
+                is_daemon_mode = true;
+                break;
+            default:
+                fprintf(stderr, "Usage: %s [-d] [-i <ip addr>] [-p <port>] [-a <asset folder>]\n", argv[0]);
+                return EXIT_FAILURE;
+            }
     }
+
+    server_addr_len = check_ip_and_port(server_ip, server_port, (s_addr *)&server_addr);
+    if (server_addr_len == 0)
+        return EXIT_FAILURE;
 
     if (is_daemon_mode && daemon(1, 0) != 0)
     {
@@ -300,16 +230,13 @@ int main(int argc, char *argv[])
     if (signal_setup() != 0)
         return EXIT_FAILURE;
 
-    if (atexit(cleanup_server) != 0)
-        return EXIT_FAILURE;
-
     if (set_fd_limit() != 0)
         return EXIT_FAILURE;
 
-    if (init_logging() != 0)
+    if (atexit(cleanup_server) != 0)
         return EXIT_FAILURE;
 
-    if (init_openssl_context(ssl_cert_file, ssl_key_file) != 0)
+    if (init_logging() != 0)
         return EXIT_FAILURE;
 
     if (initiate_cache(assets_dir) == 0)
@@ -319,8 +246,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
 
     init_client_list();
-    // Initiate the server using the parsed input
-    server_fd = initiate_server(server_ip, server_port);
+
+    server_fd = initiate_server((s_addr *)&server_addr, server_addr_len);
     if (server_fd < 0)
         return EXIT_FAILURE;
 

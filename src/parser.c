@@ -27,60 +27,90 @@
 
 #define RTT_TIMEOUT_US 200000
 
-extern const int g_epoll_fd;
+typedef enum
+{
+    DATA_READY,
+    RECV_ERROR,
+    PARTIAL_READ,
+} read_state;
+
+extern int g_epoll_fd;
+
 extern const page_cache *page_404;
 extern const page_cache *page_500;
 
-int sendfile_to_client(SSL *client_ssl, const page_cache * cache_ptr)
+bool is_request_complete(char *buf, size_t len)
 {
-    char buffer[BUFFER_SIZE];
-    int bytes_read = 0, bytes_written = 0;
-    int ssl_ret = 0;
-    off_t total_bytes_read = 0;
-    if(cache_ptr->file_map == NULL)
-    {
-        // Read file and send in chunks
-        bytes_read = (int) pread(cache_ptr->fd, buffer, BUFFER_SIZE, total_bytes_read);
-        total_bytes_read += bytes_read;
-        while (bytes_read > 0)
-        {
-            bytes_written = 0;
-            while (bytes_written < bytes_read)
-            {
-                ssl_ret = SSL_write(client_ssl, buffer + bytes_written, bytes_read - bytes_written);
-                if (ssl_ret <= 0)
-                {
-                    LOG_ERROR(" %s SSL_write error: %d", __func__, SSL_get_error(client_ssl, ssl_ret));
-                    return -1;
-                }
-                bytes_written += ssl_ret;
-            }
-            bytes_read = (int) pread(cache_ptr->fd, buffer, BUFFER_SIZE, total_bytes_read);
-            total_bytes_read += bytes_read;
-        }
+    if (len < 4)
+        return false;
 
-        // lseek(cache_ptr->fd, 0, SEEK_SET);
-        if (total_bytes_read < 0)
+    if (strncmp(buf + len - 4, "\r\n\r\n", 4) == 0)
+        return true;
+
+    return false;
+}
+
+ssize_t nb_recv(int fd, char *buf, size_t buf_size)
+{
+    char *curr = buf;
+    ssize_t total_read = 0;
+    ssize_t bytes_read = 0;
+
+    buf_size--;
+    while (1)
+    {
+        bytes_read = recv(fd, curr, buf_size, 0);
+        if (bytes_read < 0)
         {
-            LOG_ERROR("%s Error in reading file", __func__);
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            else if (errno == EINTR)
+                continue;
+            LOG_ERROR("recv");
             return -1;
         }
+
+        if (bytes_read == 0)
+            break;
+
+        curr += bytes_read;
+        total_read += bytes_read;
+        buf_size -= (size_t)bytes_read;
     }
-    else
+
+    buf[total_read] = '\0';
+    return total_read;
+}
+
+int sendfile_to_client(int fd, const page_cache *cache_ptr)
+{
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read = 0;
+    ssize_t bytes_written = 0;
+    ssize_t total_bytes_written = 0;
+    off_t total_bytes_read = 0;
+
+    while ((bytes_read = pread(cache_ptr->fd, buffer, BUFFER_SIZE, total_bytes_read)) > 0)
     {
-        bytes_written = 0;
-        while(bytes_written < cache_ptr->file_size)
+        total_bytes_read += bytes_read;
+        total_bytes_written = 0;
+
+        while (total_bytes_written < bytes_read)
         {
-            ssl_ret = SSL_write(client_ssl, cache_ptr->file_map + bytes_written, (int)cache_ptr->file_size - bytes_written);
-            if (ssl_ret <= 0)
+            bytes_written = send(fd, buffer + total_bytes_written, (size_t)(bytes_read - total_bytes_written), 0);
+            if (bytes_written <= 0)
             {
-                LOG_ERROR(" %s SSL_write error: %d", __func__, SSL_get_error(client_ssl, ssl_ret));
-                ERR_print_errors_fp(stderr);
-                fflush(stderr);
+                LOG_ERROR("%s send error: %s", __func__, strerror(errno));
                 return -1;
             }
-            bytes_written += ssl_ret;
+            total_bytes_written += bytes_written;
         }
+    }
+
+    if (bytes_read < 0)
+    {
+        LOG_ERROR("%s Error reading file: %s", __func__, strerror(errno));
+        return -1;
     }
 
     return 0;
@@ -90,19 +120,17 @@ int sendfile_to_client(SSL *client_ssl, const page_cache * cache_ptr)
  * Sends back 500 response code to client and
  * Returns -1 to instruct closing of this connection
  */
-int send_server_error(SSL *client_ssl)
+int send_server_error(int fd)
 {
-    int buf_len = 0;
+    int resp_len = 0;
     char resp[256];
-    buf_len = (int)snprintf(resp, 255, "HTTP/1.1 500 Internal Server Error\r\n"
-                                       "Content-Type: %s; charset=UTF-8\r\n"
-                                       "Content-Length: %lu\r\nConnection: close\r\n\r\n",
-                                        page_500->mime_type, page_500->file_size);
-    if (buf_len <= 0)
-        return -1;
+    resp_len = snprintf(resp, 255, "HTTP/1.1 500 Internal Server Error\r\n"
+                                    "Content-Type: %s; charset=UTF-8\r\n"
+                                    "Content-Length: %lu\r\nConnection: close\r\n\r\n",
+                                    page_500->mime_type, page_500->file_size);
 
-    SSL_write(client_ssl, resp, buf_len);
-    sendfile_to_client(client_ssl, page_500);
+    send(fd, resp, (size_t)resp_len, 0);
+    sendfile_to_client(fd, page_500);
     return -1;
 }
 
@@ -110,18 +138,19 @@ int send_server_error(SSL *client_ssl)
  * Sends back 404 response code to client
  * Returns -1 to instruct closing of this connection
  */
-int send_not_found(SSL *client_ssl)
+int send_not_found(int fd)
 {
     int buf_len = 0;
     char resp[256];
-    buf_len = (int)snprintf(resp, 255, "HTTP/1.1 404 Not Found\r\n"
-                                       "Content-Type: %s charset=UTF-8\r\n"
-                                       "Content-Length: %lu\r\nConnection: close\r\n\r\n",
-                                        page_404->mime_type, page_404->file_size);
+    buf_len = snprintf(resp, 255, "HTTP/1.1 404 Not Found\r\n"
+                                "Content-Type: %s charset=UTF-8\r\n"
+                                "Content-Length: %lu\r\nConnection: close\r\n\r\n",
+                                page_404->mime_type, page_404->file_size);
     if (buf_len <= 0)
         return -1;
-    SSL_write(client_ssl, resp, buf_len);
-    sendfile_to_client(client_ssl, page_404);
+
+    send(fd, resp, (size_t)buf_len, 0);
+    sendfile_to_client(fd, page_404);
     return -1;
 }
 
@@ -129,23 +158,23 @@ int send_not_found(SSL *client_ssl)
  * Construct appropriate header and send back the requested file
  * Returns 0 on success, -1 otherwise
  */
-int send_response(SSL *client_ssl, const page_cache *page, bool is_head)
+int send_response(int fd, const page_cache *page, bool is_head)
 {
     int buf_len = 0;
     char resp[256];
 
-    buf_len = (int)snprintf(resp, 255, "HTTP/1.1 200 OK\r\nServer: legion\r\n"
-                                       "Content-Type: %s; charset=UTF-8\r\n"
-                                       "Content-Length: %lu\r\nConnection: keep-alive\r\n\r\n",
-                                        page->mime_type, page->file_size);
+    buf_len = snprintf(resp, 255, "HTTP/1.1 200 OK\r\nServer: legion\r\n"
+                                "Content-Type: %s; charset=UTF-8\r\n"
+                                "Content-Length: %lu\r\nConnection: keep-alive\r\n\r\n",
+                                page->mime_type, page->file_size);
+
     if (buf_len <= 0)
         return -1;
 
-    SSL_write(client_ssl, resp, buf_len);
+    send(fd, resp, (size_t)buf_len, 0);
     if (!is_head)
-    {
-        sendfile_to_client(client_ssl, page);
-    }
+        sendfile_to_client(fd, page);
+
     return 0;
 }
 
@@ -154,7 +183,7 @@ int send_response(SSL *client_ssl, const page_cache *page, bool is_head)
  * And send back the page if it's found
  * Returns 0 on success, -1 otherwise
  */
-int process_get_request(SSL *client_ssl, char *buf, bool is_head)
+int process_get_request(int fd, char *buf, bool is_head)
 {
     ssize_t len = 0;
     char *file_end = NULL;
@@ -165,68 +194,62 @@ int process_get_request(SSL *client_ssl, char *buf, bool is_head)
 
     file_end = strchr(buf, ' ');
     if (file_end == NULL)
-        return send_server_error(client_ssl);
+        return send_server_error(fd);
 
     len = file_end - buf;
     if (len < 0 || len >= PATH_MAX)
-        return send_server_error(client_ssl);
+        return send_server_error(fd);
 
     (*file_end) = '\0';
     page_reqd = get_page_cache(buf);
     if (page_reqd == NULL)
     {
         LOG_ERROR("%s Requested page %s not found", __func__, buf);
-        return send_not_found(client_ssl);
+        return send_not_found(fd);
     }
-    return send_response(client_ssl, page_reqd, is_head);
-}
-
-int parse_header(const char *buffer, client_info *cinfo)
-{
-    char *needle = NULL;
-    cinfo->keep_alive = false;
-    needle = strstr(buffer, "keep-alive");
-    if (needle != NULL)
-    {
-        cinfo->keep_alive = true;
-    }
-
-    return 0;
+    return send_response(fd, page_reqd, is_head);
 }
 
 void handle_http_request(void *arg)
 {
     client_info *cinfo = (client_info *)arg;
-    int bytes_read = 0, ret = 0;
-    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read = 0, ret = 0;
 
-    set_non_blocking(cinfo->fd, false);
-    set_socket_timeout(cinfo->fd, 0, RTT_TIMEOUT_US);
-    bytes_read = SSL_read(cinfo->ssl, buffer, BUFFER_SIZE - 1);
+    bytes_read = nb_recv(cinfo->fd, cinfo->buffer - cinfo->buf_len, BUFFER_SIZE - cinfo->buf_len);
     if (bytes_read <= 0)
+        goto close_conn;
+
+    LOG_INFO("%ld %s", bytes_read, cinfo->buffer);
+
+    cinfo->buf_len += (size_t)bytes_read;
+    if (is_request_complete(cinfo->buffer, cinfo->buf_len) == false)
     {
-        remove_client_info(cinfo);
+        if (cinfo->buf_len == BUFFER_SIZE - 1)
+            goto close_conn;
         return;
     }
 
-    buffer[bytes_read] = '\0';
-    while (1)
-    {
-        // LOG_INFO("\n%s", buffer);
-        ret = parse_header(buffer, cinfo);
-        if (strncmp(buffer, "GET", 3) == 0)
-            ret = process_get_request(cinfo->ssl, buffer + 4, false);
-        else if (strncmp(buffer, "HEAD", 4) == 0)
-            ret = process_get_request(cinfo->ssl, buffer + 5, true);
-        else
-            ret = send_server_error(cinfo->ssl);
+    if (strstr(cinfo->buffer, "Connection: close") != NULL)
+        cinfo->keep_alive = false;
+    else
+        cinfo->keep_alive = true;
 
-        if (ret != 0 || cinfo->keep_alive == false)
-            break;
+    if (strncmp(cinfo->buffer, "GET", 3) == 0)
+        ret = process_get_request(cinfo->fd, cinfo->buffer + 4, false);
+    else if (strncmp(cinfo->buffer, "HEAD", 4) == 0)
+        ret = process_get_request(cinfo->fd, cinfo->buffer + 5, true);
+    else
+        ret = send_server_error(cinfo->fd);
 
-        bytes_read = SSL_read(cinfo->ssl, buffer, BUFFER_SIZE - 1);
-        if (bytes_read <= 0)
-            break;
-    }
+    if (ret < 0)
+        goto close_conn;
+
+    cinfo->buf_len = 0;
+
+    if (cinfo->keep_alive)
+        return;
+
+close_conn:
+    epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, cinfo->fd, NULL);
     remove_client_info(cinfo);
 }

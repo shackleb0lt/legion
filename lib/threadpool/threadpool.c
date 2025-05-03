@@ -24,6 +24,7 @@
 
 #include "threadpool.h"
 
+static bool is_thpool_init = false;
 thpool_queue g_th_queue;
 
 /**
@@ -166,6 +167,8 @@ int init_threadpool()
         }
         pthread_detach(g_th_queue.thread_arr[i]);
     }
+
+    is_thpool_init = true;
     return 0;
 }
 
@@ -176,6 +179,9 @@ int init_threadpool()
 void stop_threadpool()
 {
     size_t i = 0;
+
+    if (is_thpool_init == false)
+        return;
 
     pthread_mutex_lock(&(g_th_queue.qlock));
     g_th_queue.is_run = false;

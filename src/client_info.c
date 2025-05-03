@@ -35,7 +35,8 @@ void init_client_list()
     for (curr = 0; curr < MAX_FD_COUNT; curr++)
     {
         clist[curr].fd = -1;
-        clist[curr].ssl = NULL;
+        clist[curr].buf_len = 0;
+        clist[curr].buffer = NULL;
         clist[curr].keep_alive = false;
     }
 }
@@ -49,10 +50,10 @@ void cleanup_client_list()
 
     for (curr = 0; curr < MAX_FD_COUNT; curr++)
     {
-        if (clist[curr].ssl != NULL)
+        if (clist[curr].buffer != NULL)
         {
-            SSL_free(clist[curr].ssl);
-            clist[curr].ssl = NULL;
+            free(clist[curr].buffer);
+            clist[curr].buffer = NULL;
         }
 
         if (clist[curr].fd > 0)
@@ -66,18 +67,32 @@ void cleanup_client_list()
 /**
  * Stores the metadata abour incoming client in an array for future use.
  * Since the file descriptor for each client is unique and won't exceed MAX_FD_COUNT
- * the clients are stored directly at the location indexed by file descriptor 
+ * the clients are stored directly at the location indexed by file descriptor
  */
-int add_client_info(const int client_fd, SSL *client_ssl)
+int add_client_info(const int client_fd)
 {
-    if (client_fd < 0 || client_fd >= MAX_FD_COUNT || client_ssl == NULL)
+    if (client_fd < 0 )
     {
         LOG_ERROR("%s: Invalid client details received", __func__);
         return -1;
     }
+    else if (client_fd >= MAX_FD_COUNT)
+    {
+        LOG_ERROR("%s: Client connections exceeded", __func__);
+        return -1;
+    }
+
     clist[client_fd].fd = client_fd;
-    clist[client_fd].ssl = client_ssl;
+    clist[client_fd].buf_len = 0;
+    clist[client_fd].buffer = (char *) malloc(BUFFER_SIZE);
     clist[client_fd].keep_alive = false;
+
+    if (clist[client_fd].buffer == NULL)
+    {
+        LOG_ERROR("%s: malloc failed", __func__);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -92,14 +107,13 @@ void remove_client_info(client_info *cinfo)
         return;
     }
 
-    if(cinfo->ssl != NULL)
+    if (cinfo->buffer != NULL)
     {
-        SSL_shutdown(cinfo->ssl);
-        SSL_free(cinfo->ssl);
-        cinfo->ssl = NULL;
+        free(cinfo->buffer);
+        cinfo->buffer = NULL;
     }
 
-    if(cinfo->fd >= 0)
+    if (cinfo->fd >= 0)
     {
         close(cinfo->fd);
         cinfo->fd = -1;
@@ -112,14 +126,13 @@ void remove_client_info(client_info *cinfo)
  */
 void remove_client_info_fd(const int fd)
 {
-    if(fd < 0)
+    if (fd < 0)
         return;
 
-    if(clist[fd].ssl != NULL)
+    if (clist[fd].buffer != NULL)
     {
-        SSL_shutdown(clist[fd].ssl);
-        SSL_free(clist[fd].ssl);
-        clist[fd].ssl = NULL;
+        free(clist[fd].buffer);
+        clist[fd].buffer = NULL;
     }
 
     close(clist[fd].fd);

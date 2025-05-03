@@ -28,150 +28,12 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
-// #include <zlib.h>
-// #include <brotli/encode.h>
 
 static size_t g_cache_size;
-static page_cache *g_cache;
+static page_cache *g_cache = NULL;
 const page_cache *page_404 = NULL;
 const page_cache *page_500 = NULL;
 
-#define CHUNK_SIZE 16384
-
-/**
-int compress_file_zlib(const char *input_path)
-{
-    FILE *input = fopen(input_path, "rb");
-    if (!input)
-    {
-        perror("Failed to open input file");
-        return -1;
-    }
-
-    FILE *output = fopen(output_path, "wb");
-    if (!output)
-    {
-        perror("Failed to open output file");
-        fclose(input);
-        return -1;
-    }
-
-    int result = 0;
-    z_stream strm = {0};
-    if (deflateInit(&strm, Z_BEST_COMPRESSION) != Z_OK)
-    {
-        fprintf(stderr, "Failed to initialize zlib\n");
-        result = -1;
-        goto cleanup;
-    }
-
-    unsigned char in[CHUNK_SIZE];
-    unsigned char out[CHUNK_SIZE];
-
-    int flush;
-    do
-    {
-        strm.avail_in = fread(in, 1, CHUNK_SIZE, input);
-        if (ferror(input))
-        {
-            fprintf(stderr, "Error reading input file\n");
-            result = -1;
-            break;
-        }
-        flush = feof(input) ? Z_FINISH : Z_NO_FLUSH;
-        strm.next_in = in;
-
-        do
-        {
-            strm.avail_out = CHUNK_SIZE;
-            strm.next_out = out;
-            deflate(&strm, flush);
-            fwrite(out, 1, CHUNK_SIZE - strm.avail_out, output);
-        } while (strm.avail_out == 0);
-
-    } while (flush != Z_FINISH);
-
-    deflateEnd(&strm);
-}
-
-int compress_file_brotli(const char *input_path, const char *output_path)
-{
-    FILE *input = fopen(input_path, "rb");
-    if (!input)
-    {
-        perror("Failed to open input file");
-        return -1;
-    }
-
-    FILE *output = fopen(output_path, "wb");
-    if (!output)
-    {
-        perror("Failed to open output file");
-        fclose(input);
-        return -1;
-    }
-
-    int result = 0;
-
-        // Brotli compression
-    BrotliEncoderState *state = BrotliEncoderCreateInstance(NULL, NULL, NULL);
-    if (!state)
-    {
-        fprintf(stderr, "Failed to initialize Brotli encoder\n");
-        result = -1;
-        goto cleanup;
-    }
-    BrotliEncoderSetParameter(state, BROTLI_PARAM_QUALITY, 11);
-    BrotliEncoderSetParameter(state, BROTLI_PARAM_LGWIN, 22);
-
-    unsigned char in[CHUNK_SIZE];
-    unsigned char out[CHUNK_SIZE];
-    size_t available_in, available_out, total_out;
-    const unsigned char *next_in;
-    unsigned char *next_out;
-
-    int is_eof = 0;
-    while (!is_eof)
-    {
-        available_in = fread(in, 1, CHUNK_SIZE, input);
-        if (ferror(input))
-        {
-            fprintf(stderr, "Error reading input file\n");
-            result = -1;
-            break;
-        }
-        is_eof = feof(input);
-        next_in = in;
-
-        BrotliEncoderOperation op = is_eof ? BROTLI_OPERATION_FINISH : BROTLI_OPERATION_PROCESS;
-        do
-        {
-            available_out = CHUNK_SIZE;
-            next_out = out;
-
-            if (!BrotliEncoderCompressStream(state, op, &available_in, &next_in, &available_out, &next_out, &total_out))
-            {
-                fprintf(stderr, "Brotli compression failed\n");
-                result = -1;
-                break;
-            }
-
-            fwrite(out, 1, CHUNK_SIZE - available_out, output);
-        } while (available_out == 0);
-
-        if (result == -1)
-            break;
-    }
-
-    BrotliEncoderDestroyInstance(state);
-    
-
-cleanup:
-    fclose(input);
-    fclose(output);
-    return result;
-}
- */
 /**
  * Function to perform cache cleanup
  * Releases all dynamically allocated memory and
@@ -188,8 +50,6 @@ void release_cache()
             free((void *)g_cache[i].file_name);
         if (g_cache[i].fd > 0)
             close(g_cache[i].fd);
-        if (g_cache[i].file_map != NULL)
-            munmap(g_cache[i].file_map, (size_t)g_cache[i].file_size);
     }
     free(g_cache);
     g_cache = NULL;
@@ -206,10 +66,7 @@ const char *get_mime_type(const char *filename)
     char ext[8];
     const char *ptr = strrchr(filename, '.');
     if (ptr == NULL)
-    {
-        LOG_ERROR("%s: mime type not defined for %s", filename);
         return DEFAULT_MIME_T;
-    }
 
     ptr++;
     while ((*ptr) != '\0' && i < 7)
@@ -240,7 +97,7 @@ const char *get_mime_type(const char *filename)
  * If g_cache is NULL while calling this function then
  * it only counts and returns the number of files.
  */
-static size_t recursive_read(const char *root_path, size_t curr_count, const long page_size)
+static size_t recursive_read(const char *root_path, size_t curr_count)
 {
     struct dirent *entry;
     struct stat statbuf;
@@ -286,7 +143,7 @@ static size_t recursive_read(const char *root_path, size_t curr_count, const lon
             // Remove it after exiting for further use
             fullpath[path_len] = '/';
             fullpath[path_len + 1] = '\0';
-            curr_count = recursive_read(fullpath, curr_count, page_size);
+            curr_count = recursive_read(fullpath, curr_count);
             fullpath[path_len] = '\0';
             continue;
         }
@@ -301,24 +158,7 @@ static size_t recursive_read(const char *root_path, size_t curr_count, const lon
         g_cache[curr_count].file_name = strdup(fullpath);
         g_cache[curr_count].file_size = statbuf.st_size;
         g_cache[curr_count].fd = open(fullpath, O_RDONLY);
-        g_cache[curr_count].file_map = NULL;
         g_cache[curr_count].mime_type = get_mime_type(fullpath);
-
-        if (g_cache[curr_count].file_size <= page_size)
-        {
-            g_cache[curr_count].file_map = mmap(NULL, (size_t)g_cache[curr_count].file_size, PROT_READ, MAP_PRIVATE, g_cache[curr_count].fd, 0);
-            if (g_cache[curr_count].file_map == NULL)
-            {
-                LOG_ERROR("%s: mmap failed for %s", __func__, fullpath);
-            }
-        }
-
-        if (g_cache[curr_count].file_map != NULL)
-        {
-            LOG_INFO("mmap successful file: %s size: %lu", fullpath, g_cache[curr_count].file_size);
-            close(g_cache[curr_count].fd);
-            g_cache[curr_count].fd = -1;
-        }
 
         LOG_INFO("Adding file %s of type %s to cache", fullpath, g_cache[curr_count].mime_type);
         curr_count++;
@@ -335,12 +175,7 @@ static size_t recursive_read(const char *root_path, size_t curr_count, const lon
 size_t initiate_cache(const char *root_path)
 {
     size_t file_count = 0;
-    long page_size = sysconf(_SC_PAGESIZE);
-
-    if (page_size < 0)
-        page_size = DEFAULT_PAGE_SIZE;
-
-    file_count = recursive_read(root_path, 0, page_size);
+    file_count = recursive_read(root_path, 0);
     if (file_count == 0)
     {
         fprintf(stderr, "No assets found at %s\n", root_path);
@@ -354,7 +189,8 @@ size_t initiate_cache(const char *root_path)
         LOG_ERROR("%s calloc", __func__);
         return 0;
     }
-    g_cache_size = recursive_read(root_path, 0, page_size);
+
+    g_cache_size = recursive_read(root_path, 0);
     page_404 = get_page_cache(ERROR_404_PAGE);
     page_500 = get_page_cache(ERROR_500_PAGE);
     if (page_404 == NULL || page_500 == NULL)

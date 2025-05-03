@@ -23,87 +23,118 @@
  */
 
 #include "server.h"
+
+#include <sys/resource.h>
+
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 
-#define SOCKADDR_4_SIZE sizeof(struct sockaddr_in)
-#define SOCKADDR_6_SIZE sizeof(struct sockaddr_in6)
+#define S_ADDR4_SIZE sizeof(struct sockaddr_in)
+#define S_ADDR6_SIZE sizeof(struct sockaddr_in6)
 
-extern SSL_CTX *g_ssl_ctx;
+typedef struct sockaddr_in s_addr4;
+typedef struct sockaddr_in6 s_addr6;
 
 /**
- * Function to get an IPv4 address of the machine which
- * is used to communicate with internet
- * Returns a string strring numeric IPv4 notation on success,
- * NULL otherwise
+ * Function that limits the total open file descriptor
+ * for this process to MAX_FD_COUNT, we do not want
+ * socket or file desscriptor numbers to exceed this num
+ * because of the way we are storing the client connections
  */
-const char *get_internet_facing_ipv4()
+int set_fd_limit()
 {
-    int dns_fd = 0;
-    struct sockaddr_in serv = {0};
-    struct sockaddr_in local_addr = {0};
-    static char ip_addr[INET_ADDRSTRLEN];
+    int ret = 0;
+    struct rlimit rl;
 
-    // Fill struct as if we plan to connect
-    // to Google's DNS Server
-    dns_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (dns_fd < 0)
+    // Get the current limit
+    ret = getrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
     {
-        LOG_ERROR("%s socket", __func__);
-        return NULL;
-    }
-    serv.sin_family = AF_INET;
-    serv.sin_port = htons(53);
-    memset(ip_addr, 0, INET_ADDRSTRLEN);
-    inet_pton(AF_INET, "8.8.8.8", &serv.sin_addr);
-
-    // Connect the socket to the remote address
-    // This doesn’t establish a true connection because its UDP
-    // but sets up the socket with an appropriate route.
-    if (connect(dns_fd, (struct sockaddr *)&serv, SOCKADDR_4_SIZE) < 0)
-    {
-        LOG_ERROR("%s connect", __func__);
-        close(dns_fd);
-        return NULL;
+        LOG_ERROR("%s: Retrieval getrlimit", __func__);
+        return -1;
     }
 
-    // Get the local address of the socket
-    socklen_t addr_len = SOCKADDR_4_SIZE;
-    if (getsockname(dns_fd, (struct sockaddr *)&local_addr, &addr_len) == -1)
+    if (rl.rlim_cur == MAX_FD_COUNT && rl.rlim_max == MAX_FD_COUNT)
+        return 0;
+
+    // Set a new soft and hard limit for open files
+    rl.rlim_cur = MAX_FD_COUNT;
+    rl.rlim_max = MAX_FD_COUNT;
+
+    // Set the new limit
+    ret = setrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
     {
-        LOG_ERROR("%s getsockname", __func__);
-        close(dns_fd);
-        return NULL;
+        LOG_ERROR("%s: setrlimit", __func__);
+        return -1;
     }
 
-    // Convert the IP address to a string
-    inet_ntop(AF_INET, &local_addr.sin_addr, ip_addr, INET_ADDRSTRLEN);
-    LOG_INFO("Internet facing IP is %d", ip_addr);
-    close(dns_fd);
-    return ip_addr;
+    // Verify the change
+    ret = getrlimit(RLIMIT_NOFILE, &rl);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s: Verify getrlimit", __func__);
+        return -1;
+    }
+
+    if (rl.rlim_cur != MAX_FD_COUNT || rl.rlim_max != MAX_FD_COUNT)
+    {
+        LOG_ERROR("%s: Verification failed soft %ld, hard = %ld\n",
+                  __func__, rl.rlim_cur, rl.rlim_max);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Convert a normal socket to a non-blocking socket
+ * Returns 0 on success, -1 otherwise
+ */
+int set_non_blocking(const int fd, bool is_non_block)
+{
+    int ret = 0;
+    ret = fcntl(fd, F_GETFL, 0);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s fcntl get", __func__);
+        return -1;
+    }
+
+    if(is_non_block)
+        ret |= O_NONBLOCK;
+    else
+        ret &= ~O_NONBLOCK;
+
+    ret = fcntl(fd, F_SETFL, ret);
+    if (ret == -1)
+    {
+        LOG_ERROR("%s fcntl set", __func__);
+        return -1;
+    }
+    return 0;
 }
 
 /**
  * Converts ip version agnostic address to string
  */
-const char *get_ip_address(struct sockaddr *addr)
+const char *get_ip_address(s_addr *addr)
 {
     void *ip_addr = NULL;
-    short unsigned port = 0;
-    struct sockaddr_in6 *ipv6 = NULL;
-    struct sockaddr_in *ipv4 = NULL;
+    uint16_t port = 0;
+    s_addr6 *ipv6 = NULL;
+    s_addr4 *ipv4 = NULL;
     static char ipstr[INET6_ADDRSTRLEN + 8] = {0};
 
     if (addr->sa_family == AF_INET)
     {
-        ipv4 = (struct sockaddr_in *)addr;
+        ipv4 = (s_addr4 *)addr;
         ip_addr = &(ipv4->sin_addr);
         port = ntohs(ipv4->sin_port);
     }
     else
     {
-        ipv6 = (struct sockaddr_in6 *)addr;
+        ipv6 = (s_addr6 *)addr;
         ip_addr = &(ipv6->sin6_addr);
         port = ntohs(ipv6->sin6_port);
     }
@@ -115,40 +146,83 @@ const char *get_ip_address(struct sockaddr *addr)
 }
 
 /**
+ * 
+ */
+socklen_t check_ip_and_port(const char *ip_str, const char *port_str, s_addr *server_addr)
+{
+    char *end_ptr = NULL;
+    s_addr4 * addr4 = (s_addr4 *) server_addr;
+    s_addr6 * addr6 = (s_addr6 *) server_addr;
+    uint16_t port_no = SERVER_PORT_NO;
+
+    if (server_addr == NULL)
+        return 0;
+    
+    if (port_str != NULL)
+    {
+        errno = 0;
+        long port_long = strtol(port_str, &end_ptr, 10);
+
+        if (errno != 0)
+        {
+            fprintf(stderr, "%s: strtol: %s", __func__, strerror(errno));
+            return 0;
+        }
+        else if (end_ptr == port_str || *end_ptr != '\0')
+        {
+            fprintf(stderr, "Invalid port number provided: %s\n", port_str);
+            return 0;
+        }
+        else if (port_long < 0 || port_long > 65535)
+        {
+            fprintf(stderr, "Port number: %ld out of range (0-65535)\n", port_long);
+            return 0;
+        }
+        port_no = (uint16_t) port_long;
+    }
+    
+    if (ip_str == NULL)
+    {
+        addr6->sin6_family = AF_INET6;
+        addr6->sin6_port = htons(port_no);
+        // addr6->sin6_addr  = in6addr_loopback;
+        addr6->sin6_addr  = in6addr_any;
+        return S_ADDR6_SIZE;
+    }
+
+    if (inet_pton(AF_INET, ip_str, &(addr4->sin_addr)) == 1)
+    {
+        addr4->sin_family = AF_INET;
+        addr4->sin_port = htons(port_no);
+        return S_ADDR4_SIZE;
+    }
+    else if (inet_pton(AF_INET, ip_str, &(addr4->sin_addr)) == 1)
+    {
+        addr6->sin6_family = AF_INET6;
+        addr6->sin6_port = htons(port_no);
+        return S_ADDR6_SIZE;   
+    }
+
+    fprintf(stderr, "Invalid ip address provided: %s\n", ip_str);
+    return 0;
+}
+
+/**
  * Function to intiate a server socket on the machine,
  * and bind it to provided IP and port for listening to
  * incoming client connections.
  */
-int initiate_server(const char *server_ip, const char *port)
+int initiate_server(s_addr *server_addr, socklen_t addr_len)
 {
-    int server_fd = 0, ret = 0;
-    struct addrinfo hint = {0};
-    struct addrinfo *res = NULL;
+    int opt = 0;
+    int ret = 0;
+    int server_fd = 0;
 
-    if (server_ip == NULL || port == NULL)
-    {
-        LOG_ERROR("No IP address or port number available for host\n");
-        return -1;
-    }
-
-    // Fill the hint struct for desired connection
-    hint.ai_family = AF_UNSPEC;
-    hint.ai_socktype = SOCK_STREAM;
-    hint.ai_flags = AI_NUMERICHOST;
-
-    ret = getaddrinfo(server_ip, port, &hint, &res);
-    if (ret != 0 || res == NULL)
-    {
-        LOG_ERROR("getaddrinfo error: %s\n", gai_strerror(ret));
-        return -1;
-    }
-
-    // Open a TCP socket that can communicate using IPv4 or IPv6
-    server_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    server_fd = socket(server_addr->sa_family, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
-        LOG_ERROR("%s socket", __func__);
-        goto err_cleanup;
+        LOG_ERROR("socket");
+        return -1;
     }
 
     // Set to non blocking to avoid waiting for incoming connection
@@ -156,19 +230,26 @@ int initiate_server(const char *server_ip, const char *port)
     if (ret != 0)
         goto err_cleanup;
 
-    // Allow process to reuse a socket that's
-    // not entirely freed up by kernel
+    // Allow process to reuse a socket that's not entirely freed up by kernel
     ret = 1;
     ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &ret, sizeof(int));
     if (ret != 0)
     {
-        LOG_ERROR("%s setsockopt", __func__);
+        LOG_ERROR("%s setsockopt SO_REUSEADDR", __func__);
+        goto err_cleanup;
+    }
+
+    opt = 0;
+    if (server_addr->sa_family == AF_INET6 &&
+        setsockopt(server_fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) < 0)
+    {
+        LOG_ERROR("%s setsockopt IPV6_V6ONLY", __func__);
         goto err_cleanup;
     }
 
     // Bind the socket to specified IP address and port
     // All new incoming connections will be redirected to this port
-    ret = bind(server_fd, res->ai_addr, res->ai_addrlen);
+    ret = bind(server_fd, server_addr, addr_len);
     if (ret < 0)
     {
         LOG_ERROR("%s bind", __func__);
@@ -183,76 +264,46 @@ int initiate_server(const char *server_ip, const char *port)
         goto err_cleanup;
     }
 
-    LOG_INFO("Server is active on %s , sockfd %d", get_ip_address(res->ai_addr), server_fd);
-    freeaddrinfo(res);
+    LOG_INFO("Server listening on [%s] sockfd [%d]", get_ip_address(server_addr), server_fd);
     return server_fd;
 
 err_cleanup:
     close(server_fd);
-    freeaddrinfo(res);
     return -1;
 }
 
+/**
+ * 
+ */
 static int accept_client(int server_fd, int *client_fd_ptr)
 {
     int client_fd = 0, ret = 0;
-    SSL *client_ssl = NULL;
-    struct sockaddr client_addr = {0};
-    socklen_t client_addr_size = sizeof(struct sockaddr);
+    struct sockaddr_storage client_addr = {0};
+    socklen_t addr_size = sizeof(struct sockaddr_storage);
     
     (*client_fd_ptr) = -1; 
-    client_fd = accept(server_fd, &client_addr, &client_addr_size);
+    client_fd = accept(server_fd, (s_addr *)&client_addr, &addr_size);
     if (client_fd < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
         {
             return 0;
-
         }
         LOG_ERROR("%s accept", __func__);
         return -1;
     }
 
-    LOG_INFO("Incoming Connection from %s", get_ip_address(&client_addr));
-    ret = set_socket_timeout(client_fd, TLS_TIMEOUT_SEC, 0);
-    if(ret != 0)
-    {
-        close(client_fd);
-        return -1;
-    }
-
-    client_ssl = SSL_new(g_ssl_ctx);
-    if (client_ssl == NULL)
-    {
-        ERR_print_errors_cb(ssl_log_err, NULL);
-        close(client_fd);
-        return -1;
-    }
-
-    SSL_set_fd(client_ssl, client_fd);
-    ret = SSL_accept(client_ssl);
-    if (ret != 1)
-    {
-        ERR_print_errors_cb(ssl_log_err, NULL);
-        SSL_free(client_ssl);
-        close(client_fd);
-        return -1;
-    }
-
+    LOG_INFO("Incoming Connection from %s", get_ip_address((s_addr *)&client_addr));
     ret = set_non_blocking(client_fd, true);
     if (ret != 0)
     {
-        SSL_shutdown(client_ssl);
-        SSL_free(client_ssl);
         close(client_fd);
         return -1;
     }
 
-    ret = add_client_info(client_fd, client_ssl);
+    ret = add_client_info(client_fd);
     if (ret == -1)
     {
-        SSL_shutdown(client_ssl);
-        SSL_free(client_ssl);
         close(client_fd);
     }
     (*client_fd_ptr) = client_fd;
@@ -294,49 +345,3 @@ int accept_connections(const int server_fd, const int epoll_fd)
 
     return 0;
 }
-
-#ifdef IPV6_SERVER
-char *get_internet_facing_ipv6()
-{
-    int dns_fd = 0;
-    struct sockaddr_in6 serv = {0};
-    struct sockaddr_in6 local_addr = {0};
-    static char ip_addr[INET6_ADDRSTRLEN];
-
-    dns_fd = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (dns_fd < 0)
-    {
-        LOG_ERROR("%s socket", __func__);
-        return NULL;
-    }
-    serv.sin6_family = AF_INET6;
-    serv.sin6_port = htons(53);
-    memset(ip_addr, 0, INET_ADDRSTRLEN);
-    inet_pton(AF_INET, "2001:4860:4860:0:0:0:0:6464", &serv.sin6_addr);
-
-    // Connect the socket to the remote address
-    // This doesn’t establish a true connection
-    // but sets up the socket with an appropriate route.
-    if (connect(dns_fd, (struct sockaddr *)&serv, SOCKADDR_6_SIZE) < 0)
-    {
-        LOG_ERROR("%s connect", __func__);
-        close(dns_fd);
-        return NULL;
-    }
-
-    // Get the local address of the socket
-    socklen_t addr_len = SOCKADDR_6_SIZE;
-    if (getsockname(dns_fd, (struct sockaddr *)&local_addr, &addr_len) == -1)
-    {
-        LOG_ERROR("%s getsockname", __func__);
-        close(dns_fd);
-        return NULL;
-    }
-
-    // Convert the IP address to a string
-    inet_ntop(AF_INET6, &local_addr.sin6_addr, ip_addr, INET6_ADDRSTRLEN);
-
-    close(dns_fd);
-    return ip_addr;
-}
-#endif
